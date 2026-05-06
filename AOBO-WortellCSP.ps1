@@ -1,4 +1,10 @@
 <#
+PSScriptAnalyzer ignore=PSUseBOMForUnicodeEncodedFile
+Suppression rationale: File must use UTF-8 without BOM for Invoke-Expression compatibility
+when downloading and executing via Invoke-WebRequest. Unicode characters are properly
+encoded in UTF-8 without BOM.
+#>
+<#
 .SYNOPSIS
     Configure Admin On Behalf Of (AOBO) role assignments on all Azure subscriptions.
 
