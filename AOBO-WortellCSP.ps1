@@ -135,6 +135,9 @@ try {
 # Phase 1: Retrieve subscriptions and current user
 # =============================================================================
 
+Write-Output ""
+Write-Output "[Phase 1] Retrieving subscriptions and current user..."
+
 try {
     $Subscriptions = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" }
     Write-Output "  ✓ Retrieved $($Subscriptions.Count) enabled subscription(s)"
@@ -157,11 +160,11 @@ if ($Subscriptions.Count -eq 0) {
 }
 
 # =============================================================================
-# Phase 1.5: Validate group ObjectIds exist in tenant
+# Phase 2: Validate group ObjectIds exist in tenant
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 1.5] Validating group ObjectIds..."
+Write-Output "[Phase 2] Validating group ObjectIds..."
 Write-Output ""
 
 $InvalidGroups = @()
@@ -187,11 +190,11 @@ if ($InvalidGroups.Count -gt 0) {
 }
 
 # =============================================================================
-# Phase 2: Verify Owner permissions on subscriptions
+# Phase 3: Verify Owner permissions on subscriptions
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 2] Verifying Owner permissions on subscriptions..."
+Write-Output "[Phase 3] Verifying Owner permissions on subscriptions..."
 Write-Output ""
 
 foreach ($Subscription in $Subscriptions) {
@@ -231,11 +234,11 @@ Write-Output "  Subscriptions skipped:    $($SkippedSubscriptions.Count)"
 Start-Sleep -Seconds 5
 
 # =============================================================================
-# Phase 3: Access validation via temporary management group
+# Phase 4: Access validation via temporary management group
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 3] Validating access rights via temporary management group..."
+Write-Output "[Phase 4] Validating access rights via temporary management group..."
 
 $TempMgName = "Placeholder_To_Be_Removed"
 
@@ -255,11 +258,11 @@ if ($DryRun) {
 }
 
 # =============================================================================
-# Phase 4: Role assignments on management groups
+# Phase 5: Role assignments on management groups
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 4] Assigning roles on management groups..."
+Write-Output "[Phase 5] Assigning roles on management groups..."
 Write-Output ""
 
 try {
@@ -311,11 +314,11 @@ foreach ($ManagementGroup in $ManagementGroups) {
 }
 
 # =============================================================================
-# Phase 5: Role assignments on subscriptions
+# Phase 6: Role assignments on subscriptions
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 5] Assigning roles on subscriptions..."
+Write-Output "[Phase 6] Assigning roles on subscriptions..."
 Write-Output ""
 
 foreach ($Subscription in $ProcessedSubscriptions) {
@@ -368,11 +371,11 @@ foreach ($Subscription in $ProcessedSubscriptions) {
 }
 
 # =============================================================================
-# Phase 6: Cleanup and summary
+# Phase 7: Cleanup and summary
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 6] Cleanup and summary..."
+Write-Output "[Phase 7] Cleanup and summary..."
 Write-Output ""
 
 try {
