@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Configure Admin On Behalf Of (AOBO) role assignments on all Azure subscriptions.
 
