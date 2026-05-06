@@ -1,11 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
     Configure Admin On Behalf Of (AOBO) role assignments on all Azure subscriptions.
 
 .DESCRIPTION
     This script configures AOBO role assignments for Wortell CSP Tier 1 & 2 AdminAgents
     and IngramMicroNL AdminAgents on all subscriptions within a customer tenant.
-    
+
     Based on: IngramMicroNL AOBO scripts
     Reference: https://github.com/IngramMicroNL/Azure/tree/main/AOBO%20-%20AdminOnBehalfOf
 
@@ -14,7 +14,7 @@
     Purpose:    AOBO configuration for Wortell CSP Tier 1 & 2 plus IngramMicroNL
     Author:     Paul Schuur
     Date:       May 6, 2026
-    
+
     Prerequisites:
     - Azure Cloud Shell or local environment with Az PowerShell module
     - Global Administrator rights on the customer tenant
@@ -46,17 +46,17 @@ param(
 # =============================================================================
 
 $Groups = @(
-    @{ 
+    @{
         Name     = "Wortell CSP Tier 1 AdminAgents"
         ObjectId = "2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7"
         Roles    = @("Owner")
     },
-    @{ 
+    @{
         Name     = "Wortell CSP Tier 2 AdminAgents"
         ObjectId = "27f932e9-605d-4270-bf3f-a02249b1721c"
         Roles    = @("Owner")
     },
-    @{ 
+    @{
         Name     = "IngramMicroNL AdminAgents"
         ObjectId = "34c4dd11-78c0-41e5-8370-c6dbf16bc3e9"
         Roles    = @("Support Request Contributor")
@@ -71,7 +71,6 @@ $Errors              = @()
 $SkippedSubscriptions = @()
 $ProcessedSubscriptions = @()
 $ProcessedManagementGroups = @()
-$SkippedManagementGroups = @()
 $RoleAssignmentsCreated = 0
 $RoleAssignmentsExists = 0
 $MgRoleAssignmentsCreated = 0
@@ -112,19 +111,19 @@ Write-Output "  Testing Foreign Principal assignment on subscription: $($TestSub
 
 try {
     # Attempt to create a test role assignment
-    $TestAssignment = New-AzRoleAssignment `
+    New-AzRoleAssignment `
         -ObjectId $TestGroup.ObjectId `
         -RoleDefinitionName $TestRole `
         -Scope $TestScope `
         -ObjectType "ForeignGroup" `
-        -ErrorAction Stop
-    
+        -ErrorAction Stop | Out-Null
+
     Write-Output "  ✓ CSP reseller relationship verified"
-    
+
     # Immediately remove the test assignment
     Remove-AzRoleAssignment -ObjectId $TestGroup.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
     Write-Output "  ✓ Test assignment cleaned up"
-    
+
 } catch {
     Write-Output ""
     Write-Error "Unable to create Foreign Principal role assignment. This typically means no active CSP reseller relationship exists between this tenant and the Wortell CSP partner tenant."
@@ -177,7 +176,7 @@ Write-Output ""
 foreach ($Group in $Groups) {
     try {
         $ExistingAssignments = Get-AzRoleAssignment -ObjectId $Group.ObjectId -ErrorAction SilentlyContinue
-        
+
         if ($ExistingAssignments) {
             Write-Output "  → $($Group.Name): $($ExistingAssignments.Count) existing role assignment(s) found"
         } else {
@@ -217,7 +216,7 @@ foreach ($Subscription in $Subscriptions) {
             -RoleDefinitionName "Owner" `
             -Scope "/subscriptions/$($Subscription.Id)" `
             -ErrorAction SilentlyContinue
-        
+
         if ($OwnerCheck) {
             Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
             $ProcessedSubscriptions += $Subscription
@@ -288,11 +287,11 @@ try {
 
 foreach ($ManagementGroup in $ManagementGroups) {
     $ProcessedManagementGroups += $ManagementGroup
-    
+
     foreach ($Group in $Groups) {
         foreach ($Role in $Group.Roles) {
             $Scope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
-            
+
             try {
                 # Check if role assignment already exists
                 $RBACCheck = Get-AzRoleAssignment `
@@ -300,7 +299,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     -RoleDefinitionName $Role `
                     -Scope $Scope `
                     -ErrorAction SilentlyContinue
-                
+
                 if ($RBACCheck) {
                     Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
                     $MgRoleAssignmentsExists++
@@ -315,7 +314,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                             -Scope $Scope `
                             -ObjectType "ForeignGroup" `
                             -ErrorAction Stop | Out-Null
-                        
+
                         Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
                         $MgRoleAssignmentsCreated++
                     }
@@ -341,11 +340,11 @@ foreach ($Subscription in $ProcessedSubscriptions) {
         Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
         Write-Output ""
         Write-Output "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
-        
+
         foreach ($Group in $Groups) {
             foreach ($Role in $Group.Roles) {
                 $Scope = "/subscriptions/$($Subscription.Id)"
-                
+
                 try {
                     # Check if role assignment already exists
                     $RBACCheck = Get-AzRoleAssignment `
@@ -353,7 +352,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         -RoleDefinitionName $Role `
                         -Scope $Scope `
                         -ErrorAction SilentlyContinue
-                    
+
                     if ($RBACCheck) {
                         Write-Output "    → Role assignment already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
@@ -368,7 +367,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                                 -Scope $Scope `
                                 -ObjectType "ForeignGroup" `
                                 -ErrorAction Stop | Out-Null
-                            
+
                             Write-Output "    ✓ Role assignment created: $Role for $($Group.Name)"
                             $RoleAssignmentsCreated++
                         }
@@ -428,7 +427,7 @@ if ($DryRun) {
 Write-Output "  MG role assignments (already exist): $MgRoleAssignmentsExists"
 Write-Output ""
 
-# Subscription Role Assignments  
+# Subscription Role Assignments
 if ($DryRun) {
     Write-Output "  Sub role assignments to create:  $RoleAssignmentsCreated"
 } else {
