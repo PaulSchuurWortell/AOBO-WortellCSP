@@ -85,6 +85,26 @@ The script provides detailed progress logging at each step, including:
 - Any errors encountered with descriptions
 - Final summary with success or warning status
 
+## Example Output
+```
+================================================================================
+Summary
+================================================================================
+  Management groups processed: 12
+  Subscriptions processed:     4
+  Subscriptions skipped:       0
+
+  MG role assignments created:   0
+  MG role assignments (already exist): 36
+
+  Sub role assignments created:   0
+  Sub role assignments (already exist): 12
+
+================================================================================
+✓ SUCCESS: AOBO configuration completed without errors
+================================================================================
+```
+
 ## Error Handling
 
 - The script uses `try/catch` blocks for all operations that can fail
