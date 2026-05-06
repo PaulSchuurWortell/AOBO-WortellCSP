@@ -70,8 +70,12 @@ $Groups = @(
 $Errors              = @()
 $SkippedSubscriptions = @()
 $ProcessedSubscriptions = @()
+$ProcessedManagementGroups = @()
+$SkippedManagementGroups = @()
 $RoleAssignmentsCreated = 0
 $RoleAssignmentsExists = 0
+$MgRoleAssignmentsCreated = 0
+$MgRoleAssignmentsExists = 0
 
 # =============================================================================
 # Phase 0: Verify active CSP reseller relationship
@@ -279,9 +283,12 @@ try {
 } catch {
     Write-Error "Failed to retrieve management groups: $_"
     $Errors += "Failed to retrieve management groups: $_"
+    $ManagementGroups = @()  # Set to empty array so we don't process any
 }
 
 foreach ($ManagementGroup in $ManagementGroups) {
+    $ProcessedManagementGroups += $ManagementGroup
+    
     foreach ($Group in $Groups) {
         foreach ($Role in $Group.Roles) {
             $Scope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
@@ -296,11 +303,11 @@ foreach ($ManagementGroup in $ManagementGroups) {
                 
                 if ($RBACCheck) {
                     Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                    $RoleAssignmentsExists++
+                    $MgRoleAssignmentsExists++
                 } else {
                     if ($DryRun) {
                         Write-Output "  [DRY RUN] Would create role assignment: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                        $RoleAssignmentsCreated++
+                        $MgRoleAssignmentsCreated++
                     } else {
                         New-AzRoleAssignment `
                             -ObjectId $Group.ObjectId `
@@ -310,7 +317,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                             -ErrorAction Stop | Out-Null
                         
                         Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                        $RoleAssignmentsCreated++
+                        $MgRoleAssignmentsCreated++
                     }
                 }
             } catch {
@@ -407,14 +414,35 @@ Write-Output ""
 Write-Output "================================================================================"
 Write-Output "Summary"
 Write-Output "================================================================================"
+Write-Output "  Management groups processed: $($ProcessedManagementGroups.Count)"
 Write-Output "  Subscriptions processed:     $($ProcessedSubscriptions.Count)"
 Write-Output "  Subscriptions skipped:       $($SkippedSubscriptions.Count)"
+Write-Output ""
+
+# Management Group Role Assignments
 if ($DryRun) {
-    Write-Output "  Role assignments to create:  $RoleAssignmentsCreated"
+    Write-Output "  MG role assignments to create:  $MgRoleAssignmentsCreated"
 } else {
-    Write-Output "  Role assignments created:   $RoleAssignmentsCreated"
+    Write-Output "  MG role assignments created:   $MgRoleAssignmentsCreated"
 }
-Write-Output "  Role assignments (already exist): $RoleAssignmentsExists"
+Write-Output "  MG role assignments (already exist): $MgRoleAssignmentsExists"
+Write-Output ""
+
+# Subscription Role Assignments  
+if ($DryRun) {
+    Write-Output "  Sub role assignments to create:  $RoleAssignmentsCreated"
+} else {
+    Write-Output "  Sub role assignments created:   $RoleAssignmentsCreated"
+}
+Write-Output "  Sub role assignments (already exist): $RoleAssignmentsExists"
+
+if ($ProcessedManagementGroups.Count -gt 0) {
+    Write-Output ""
+    Write-Output "  Processed management groups:"
+    foreach ($Mg in $ProcessedManagementGroups) {
+        Write-Output "    - $($Mg.DisplayName) [$($Mg.Name)]"
+    }
+}
 
 if ($SkippedSubscriptions.Count -gt 0) {
     Write-Output ""
