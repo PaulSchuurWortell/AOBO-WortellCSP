@@ -69,7 +69,7 @@ The script follows a **seven-phase process**:
 
 0. **Phase 0** — Verifies that an active CSP reseller relationship exists by testing Foreign Principal role assignment capability
 1. **Phase 1** — Retrieves all enabled subscriptions and identifies the current user
-2. **Phase 2** — Validates that the configured group ObjectIds exist in the tenant
+2. **Phase 2** — Checks existing foreign principal role assignments (informational only)
 3. **Phase 3** — Verifies that the current user has Owner permissions on each subscription
    - Subscriptions without Owner access are skipped with a warning
 4. **Phase 4** — Validates access rights by creating and removing a temporary management group

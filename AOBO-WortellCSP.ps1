@@ -160,24 +160,32 @@ if ($Subscriptions.Count -eq 0) {
 }
 
 # =============================================================================
-# Phase 2: Validate group ObjectIds exist in tenant
+# Phase 2: Foreign principal validation (informational)
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 2] Validating group ObjectIds..."
+Write-Output "[Phase 2] Checking existing foreign principal role assignments..."
 Write-Output ""
 
-$InvalidGroups = @()
+# Phase 0 already validated that foreign groups work, so this phase is informational only
+# It shows what role assignments already exist for the configured groups
 
 foreach ($Group in $Groups) {
     try {
-        $GroupCheck = Get-AzADGroup -ObjectId $Group.ObjectId -ErrorAction Stop
-        Write-Output "  ✓ $($Group.Name) [$($Group.ObjectId)]"
+        $ExistingAssignments = Get-AzRoleAssignment -ObjectId $Group.ObjectId -ErrorAction SilentlyContinue
+        
+        if ($ExistingAssignments) {
+            Write-Output "  → $($Group.Name): $($ExistingAssignments.Count) existing role assignment(s) found"
+        } else {
+            Write-Output "  → $($Group.Name): No existing role assignments found"
+        }
     } catch {
-        Write-Warning "Group not found: $($Group.Name) [$($Group.ObjectId)]"
-        $InvalidGroups += $Group
+        Write-Output "  → $($Group.Name): Unable to check existing assignments (this is normal for new setups)"
     }
 }
+
+Write-Output ""
+Write-Output "  Note: Phase 0 already validated CSP relationship and foreign group resolution"
 
 if ($InvalidGroups.Count -gt 0) {
     Write-Output ""
