@@ -19,34 +19,11 @@ The script ensures these groups have the appropriate permissions on all manageme
 
 ## Usage
 
-### Option 1: Execute Directly from GitHub (Recommended for Cloud Shell)
-
-Open **Azure Cloud Shell** (PowerShell) and run:
-
-```powershell
-$uri = "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1"
-Invoke-WebRequest -Uri $uri -OutFile AOBO-WortellCSP.ps1
-.\AOBO-WortellCSP.ps1
-```
-
-**Or as a one-liner:**
+Open **Azure Cloud Shell** (PowerShell) and paste this command:
 
 ```powershell
 Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content
 ```
-
-### Option 2: Run Locally
-
-1. Clone or download the repository
-2. Open PowerShell as Administrator
-3. Ensure you are connected to Azure:
-   ```powershell
-   Connect-AzAccount
-   ```
-4. Execute the script:
-   ```powershell
-   .\AOBO-WortellCSP.ps1
-   ```
 
 ## What the Script Does
 
