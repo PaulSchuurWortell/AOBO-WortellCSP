@@ -436,14 +436,6 @@ if ($DryRun) {
 }
 Write-Output "  Sub role assignments (already exist): $RoleAssignmentsExists"
 
-if ($ProcessedManagementGroups.Count -gt 0) {
-    Write-Output ""
-    Write-Output "  Processed management groups:"
-    foreach ($Mg in $ProcessedManagementGroups) {
-        Write-Output "    - $($Mg.DisplayName) [$($Mg.Name)]"
-    }
-}
-
 if ($SkippedSubscriptions.Count -gt 0) {
     Write-Output ""
     Write-Output "  Skipped subscriptions:"
