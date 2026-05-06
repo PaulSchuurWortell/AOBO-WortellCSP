@@ -24,18 +24,37 @@ The script ensures these groups have the appropriate permissions on all manageme
 
 ## Usage
 
+### Option 1: Direct Execution (Recommended)
+
 Open **Azure Cloud Shell** (PowerShell) and paste this command:
 
 ```powershell
 Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content
 ```
 
-### Dry Run Mode
+### Option 2: Download and Execute with Parameters
 
-To validate prerequisites without making any changes, use the `-DryRun` switch:
+For advanced usage with parameters like dry-run mode:
 
 ```powershell
-Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content -DryRun
+# Download the script
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -OutFile "AOBO-WortellCSP.ps1"
+
+# Execute normally
+.\AOBO-WortellCSP.ps1
+
+# Or execute in dry-run mode
+.\AOBO-WortellCSP.ps1 -DryRun
+```
+
+### Dry Run Mode
+
+To validate prerequisites without making any changes:
+
+```powershell
+# Download first, then run with -DryRun
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -OutFile "AOBO-WortellCSP.ps1"
+.\AOBO-WortellCSP.ps1 -DryRun
 ```
 
 **What Dry Run does:**
