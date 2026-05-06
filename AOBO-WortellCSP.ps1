@@ -66,7 +66,7 @@ $RoleAssignmentsCreated = 0
 $RoleAssignmentsExists = 0
 
 # =============================================================================
-# Phase 1: Retrieve subscriptions and current user
+# Phase 0: Verify active CSP reseller relationship
 # =============================================================================
 
 Write-Output ""
@@ -74,14 +74,62 @@ Write-Output "==================================================================
 Write-Output "AOBO Configuration Script - Wortell CSP"
 Write-Output "================================================================================"
 Write-Output ""
-Write-Output "[Phase 1] Retrieving subscriptions and current user..."
+Write-Output "[Phase 0] Verifying active CSP reseller relationship..."
+
+# Get first available subscription for testing
+try {
+    $TestSubscription = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" } | Select-Object -First 1
+    if (-not $TestSubscription) {
+        Write-Error "No enabled subscriptions found to perform reseller relationship check"
+        return
+    }
+} catch {
+    Write-Error "Failed to retrieve subscriptions for reseller relationship check: $_"
+    return
+}
+
+# Test Foreign Principal role assignment capability
+$TestGroup = $Groups[0]  # Use first Wortell group for testing
+$TestRole = "Reader"     # Use harmless Reader role for testing
+$TestScope = "/subscriptions/$($TestSubscription.Id)"
+
+Write-Output "  Testing Foreign Principal assignment on subscription: $($TestSubscription.Name)"
+
+try {
+    # Attempt to create a test role assignment
+    $TestAssignment = New-AzRoleAssignment `
+        -ObjectId $TestGroup.ObjectId `
+        -RoleDefinitionName $TestRole `
+        -Scope $TestScope `
+        -ObjectType "ForeignGroup" `
+        -ErrorAction Stop
+    
+    Write-Output "  ✓ CSP reseller relationship verified"
+    
+    # Immediately remove the test assignment
+    Remove-AzRoleAssignment -ObjectId $TestGroup.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
+    Write-Output "  ✓ Test assignment cleaned up"
+    
+} catch {
+    Write-Output ""
+    Write-Error "Unable to create Foreign Principal role assignment. This typically means no active CSP reseller relationship exists between this tenant and the Wortell CSP partner tenant."
+    Write-Output ""
+    Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
+    Write-Output ""
+    Write-Error "Exiting script."
+    return
+}
+
+# =============================================================================
+# Phase 1: Retrieve subscriptions and current user
+# =============================================================================
 
 try {
     $Subscriptions = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" }
     Write-Output "  ✓ Retrieved $($Subscriptions.Count) enabled subscription(s)"
 } catch {
     Write-Error "Failed to retrieve subscriptions: $_"
-    exit 1
+    return
 }
 
 try {
@@ -89,12 +137,12 @@ try {
     Write-Output "  ✓ Current user: $($CurrentUser.DisplayName) ($($CurrentUser.Id))"
 } catch {
     Write-Error "Failed to retrieve current user: $_"
-    exit 1
+    return
 }
 
 if ($Subscriptions.Count -eq 0) {
     Write-Error "No enabled subscriptions found in this tenant"
-    exit 1
+    return
 }
 
 # =============================================================================
@@ -124,7 +172,7 @@ if ($InvalidGroups.Count -gt 0) {
         Write-Error "  - $($Group.Name) [$($Group.ObjectId)]"
     }
     Write-Error "Cannot proceed with role assignments."
-    exit 1
+    return
 }
 
 # =============================================================================
@@ -161,7 +209,7 @@ foreach ($Subscription in $Subscriptions) {
 if ($ProcessedSubscriptions.Count -eq 0) {
     Write-Output ""
     Write-Error "Current user does not have Owner role on any subscription. Cannot proceed."
-    exit 1
+    return
 }
 
 Write-Output ""
@@ -187,7 +235,7 @@ try {
 } catch {
     Write-Error "Failed to create temporary management group: $_"
     Write-Error "Access validation failed. Cannot proceed with role assignments."
-    exit 1
+    return
 }
 
 # =============================================================================

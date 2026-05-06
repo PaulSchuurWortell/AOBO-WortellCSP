@@ -16,6 +16,7 @@ The script ensures these groups have the appropriate permissions on all manageme
 - **Azure Cloud Shell** (recommended) or local PowerShell environment with Az module
 - **Global Administrator** rights on the customer Azure tenant
 - Active connection to Azure (`Connect-AzAccount`)
+- **Active CSP reseller relationship** between the customer tenant and Wortell CSP partner tenant
 - **AOBO groups must be invited as guests** in the customer tenant:
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
@@ -31,8 +32,9 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 ## What the Script Does
 
-The script follows a **six-phase process**:
+The script follows a **seven-phase process**:
 
+0. **Phase 0** — Verifies that an active CSP reseller relationship exists by testing Foreign Principal role assignment capability
 1. **Phase 1** — Retrieves all enabled subscriptions and identifies the current user
 1.5. **Phase 1.5** — Validates that the configured group ObjectIds exist in the tenant
 2. **Phase 2** — Verifies that the current user has Owner permissions on each subscription
@@ -55,7 +57,7 @@ The script provides detailed progress logging at each step, including:
 - The script uses `try/catch` blocks for all operations that can fail
 - Errors are collected and reported in a summary at the end
 - The script continues processing even if individual role assignments fail
-- If the current user lacks Owner on all subscriptions, the script exits with an error
+- If the current user lacks Owner on all subscriptions, the script returns with an error
 
 ## Support
 
