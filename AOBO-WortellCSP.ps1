@@ -31,7 +31,15 @@
 
 .EXAMPLE
     .\AOBO-WortellCSP.ps1
+
+.EXAMPLE
+    .\AOBO-WortellCSP.ps1 -DryRun
 #>
+
+param(
+    [Parameter(Mandatory = $false)]
+    [switch]$DryRun
+)
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -72,6 +80,9 @@ $RoleAssignmentsExists = 0
 Write-Output ""
 Write-Output "================================================================================"
 Write-Output "AOBO Configuration Script - Wortell CSP"
+if ($DryRun) {
+    Write-Output "DRY RUN MODE - No changes will be made"
+}
 Write-Output "================================================================================"
 Write-Output ""
 Write-Output "[Phase 0] Verifying active CSP reseller relationship..."
@@ -228,14 +239,19 @@ Write-Output "[Phase 3] Validating access rights via temporary management group.
 
 $TempMgName = "Placeholder_To_Be_Removed"
 
-try {
-    New-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
-    Write-Output "  ✓ Temporary management group created: $TempMgName"
-    Start-Sleep -Seconds 2
-} catch {
-    Write-Error "Failed to create temporary management group: $_"
-    Write-Error "Access validation failed. Cannot proceed with role assignments."
-    return
+if ($DryRun) {
+    Write-Output "  [DRY RUN] Would create temporary management group: $TempMgName"
+    Write-Output "  [DRY RUN] Would validate access rights"
+} else {
+    try {
+        New-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
+        Write-Output "  ✓ Temporary management group created: $TempMgName"
+        Start-Sleep -Seconds 2
+    } catch {
+        Write-Error "Failed to create temporary management group: $_"
+        Write-Error "Access validation failed. Cannot proceed with role assignments."
+        return
+    }
 }
 
 # =============================================================================
@@ -271,15 +287,20 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
                     $RoleAssignmentsExists++
                 } else {
-                    New-AzRoleAssignment `
-                        -ObjectId $Group.ObjectId `
-                        -RoleDefinitionName $Role `
-                        -Scope $Scope `
-                        -ObjectType "ForeignGroup" `
-                        -ErrorAction Stop | Out-Null
-                    
-                    Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                    $RoleAssignmentsCreated++
+                    if ($DryRun) {
+                        Write-Output "  [DRY RUN] Would create role assignment: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
+                        $RoleAssignmentsCreated++
+                    } else {
+                        New-AzRoleAssignment `
+                            -ObjectId $Group.ObjectId `
+                            -RoleDefinitionName $Role `
+                            -Scope $Scope `
+                            -ObjectType "ForeignGroup" `
+                            -ErrorAction Stop | Out-Null
+                        
+                        Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
+                        $RoleAssignmentsCreated++
+                    }
                 }
             } catch {
                 Write-Warning "Error assigning $Role to $($Group.Name) on $($ManagementGroup.Name): $_"
@@ -319,15 +340,20 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         Write-Output "    → Role assignment already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
                     } else {
-                        New-AzRoleAssignment `
-                            -ObjectId $Group.ObjectId `
-                            -RoleDefinitionName $Role `
-                            -Scope $Scope `
-                            -ObjectType "ForeignGroup" `
-                            -ErrorAction Stop | Out-Null
-                        
-                        Write-Output "    ✓ Role assignment created: $Role for $($Group.Name)"
-                        $RoleAssignmentsCreated++
+                        if ($DryRun) {
+                            Write-Output "    [DRY RUN] Would create role assignment: $Role for $($Group.Name)"
+                            $RoleAssignmentsCreated++
+                        } else {
+                            New-AzRoleAssignment `
+                                -ObjectId $Group.ObjectId `
+                                -RoleDefinitionName $Role `
+                                -Scope $Scope `
+                                -ObjectType "ForeignGroup" `
+                                -ErrorAction Stop | Out-Null
+                            
+                            Write-Output "    ✓ Role assignment created: $Role for $($Group.Name)"
+                            $RoleAssignmentsCreated++
+                        }
                     }
                 } catch {
                     Write-Warning "    Error assigning $Role to $($Group.Name): $_"
@@ -350,9 +376,13 @@ Write-Output "[Phase 6] Cleanup and summary..."
 Write-Output ""
 
 try {
-    Remove-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
-    Write-Output "  ✓ Temporary management group removed"
-    Start-Sleep -Seconds 2
+    if ($DryRun) {
+        Write-Output "  [DRY RUN] Would remove temporary management group"
+    } else {
+        Remove-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
+        Write-Output "  ✓ Temporary management group removed"
+        Start-Sleep -Seconds 2
+    }
 } catch {
     Write-Warning "Failed to remove temporary management group: $_"
     $Errors += "Failed to remove temporary management group: $_"
@@ -368,7 +398,11 @@ Write-Output "Summary"
 Write-Output "================================================================================"
 Write-Output "  Subscriptions processed:     $($ProcessedSubscriptions.Count)"
 Write-Output "  Subscriptions skipped:       $($SkippedSubscriptions.Count)"
-Write-Output "  Role assignments created:   $RoleAssignmentsCreated"
+if ($DryRun) {
+    Write-Output "  Role assignments to create:  $RoleAssignmentsCreated"
+} else {
+    Write-Output "  Role assignments created:   $RoleAssignmentsCreated"
+}
 Write-Output "  Role assignments (already exist): $RoleAssignmentsExists"
 
 if ($SkippedSubscriptions.Count -gt 0) {
@@ -391,11 +425,19 @@ Write-Output ""
 
 if ($Errors.Count -eq 0) {
     Write-Output "================================================================================"
-    Write-Output "✓ SUCCESS: AOBO configuration completed without errors"
+    if ($DryRun) {
+        Write-Output "✓ DRY RUN SUCCESS: All prerequisites validated, ready for actual deployment"
+    } else {
+        Write-Output "✓ SUCCESS: AOBO configuration completed without errors"
+    }
     Write-Output "================================================================================"
 } else {
     Write-Output "================================================================================"
-    Write-Output "⚠ COMPLETED with $($Errors.Count) error(s) — see details above"
+    if ($DryRun) {
+        Write-Output "⚠ DRY RUN COMPLETED with $($Errors.Count) issue(s) — see details above"
+    } else {
+        Write-Output "⚠ COMPLETED with $($Errors.Count) error(s) — see details above"
+    }
     Write-Output "================================================================================"
 }
 

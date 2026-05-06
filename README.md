@@ -30,6 +30,20 @@ Open **Azure Cloud Shell** (PowerShell) and paste this command:
 Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content
 ```
 
+### Dry Run Mode
+
+To validate prerequisites without making any changes, use the `-DryRun` switch:
+
+```powershell
+Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content -DryRun
+```
+
+**What Dry Run does:**
+- Validates all prerequisites (CSP relationship, group existence, permissions)
+- Shows what role assignments would be created
+- Shows what management group operations would be performed
+- **No actual changes are made to your Azure environment**
+
 ## What the Script Does
 
 The script follows a **seven-phase process**:
