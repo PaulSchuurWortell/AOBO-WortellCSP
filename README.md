@@ -16,6 +16,10 @@ The script ensures these groups have the appropriate permissions on all manageme
 - **Azure Cloud Shell** (recommended) or local PowerShell environment with Az module
 - **Global Administrator** rights on the customer Azure tenant
 - Active connection to Azure (`Connect-AzAccount`)
+- **AOBO groups must be invited as guests** in the customer tenant:
+  - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
+  - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
+  - IngramMicroNL AdminAgents (`34c4dd11-78c0-41e5-8370-c6dbf16bc3e9`)
 
 ## Usage
 
@@ -30,6 +34,7 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 The script follows a **six-phase process**:
 
 1. **Phase 1** — Retrieves all enabled subscriptions and identifies the current user
+1.5. **Phase 1.5** — Validates that the configured group ObjectIds exist in the tenant
 2. **Phase 2** — Verifies that the current user has Owner permissions on each subscription
    - Subscriptions without Owner access are skipped with a warning
 3. **Phase 3** — Validates access rights by creating and removing a temporary management group

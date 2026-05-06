@@ -98,6 +98,36 @@ if ($Subscriptions.Count -eq 0) {
 }
 
 # =============================================================================
+# Phase 1.5: Validate group ObjectIds exist in tenant
+# =============================================================================
+
+Write-Output ""
+Write-Output "[Phase 1.5] Validating group ObjectIds..."
+Write-Output ""
+
+$InvalidGroups = @()
+
+foreach ($Group in $Groups) {
+    try {
+        $GroupCheck = Get-AzADGroup -ObjectId $Group.ObjectId -ErrorAction Stop
+        Write-Output "  ✓ $($Group.Name) [$($Group.ObjectId)]"
+    } catch {
+        Write-Warning "Group not found: $($Group.Name) [$($Group.ObjectId)]"
+        $InvalidGroups += $Group
+    }
+}
+
+if ($InvalidGroups.Count -gt 0) {
+    Write-Output ""
+    Write-Error "The following groups do not exist in this tenant. Please ensure they are invited as guests or contact your administrator:"
+    foreach ($Group in $InvalidGroups) {
+        Write-Error "  - $($Group.Name) [$($Group.ObjectId)]"
+    }
+    Write-Error "Cannot proceed with role assignments."
+    exit 1
+}
+
+# =============================================================================
 # Phase 2: Verify Owner permissions on subscriptions
 # =============================================================================
 
@@ -304,8 +334,8 @@ if ($SkippedSubscriptions.Count -gt 0) {
 if ($Errors.Count -gt 0) {
     Write-Output ""
     Write-Output "  Errors encountered:"
-    foreach ($Error in $Errors) {
-        Write-Output "    - $Error"
+    foreach ($ErrorMessage in $Errors) {
+        Write-Output "    - $ErrorMessage"
     }
 }
 
