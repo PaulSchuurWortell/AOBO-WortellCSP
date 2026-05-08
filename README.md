@@ -15,8 +15,9 @@ The script ensures these groups have the appropriate permissions on all manageme
 
 - **Azure Cloud Shell** (recommended) or local PowerShell environment with Az module
 - **Global Administrator** rights on the customer Azure tenant
-- Active connection to Azure (`Connect-AzAccount`)
+- **Active connection to Azure** (`Connect-AzAccount`)
 - **Active CSP reseller relationship** between the customer tenant and Wortell CSP partner tenant
+- **Unrestricted Owner access** to the Azure subscriptions and/or management groups being configured
 - **AOBO groups must be invited as guests** in the customer tenant:
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)

@@ -19,6 +19,7 @@
     - Azure Cloud Shell or local environment with Az PowerShell module
     - Global Administrator rights on the customer tenant
     - Connected to Azure via Connect-AzAccount
+    - Unrestricted Owner access to the Azure subscriptions and/or management groups being configured
 
 .CHANGELOG
     v1.0 (May 6, 2026)
