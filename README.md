@@ -5,6 +5,7 @@
 **Admin On Behalf Of (AOBO)** is a security model in Azure that allows Managed Service Providers (MSPs) to manage customer Azure subscriptions on their behalf. This script automates the configuration of AOBO role assignments across all subscriptions in a customer tenant.
 
 The `AOBO-WortellCSP.ps1` script configures role assignments for:
+
 - **Wortell CSP Tier 1 AdminAgents** — Owner role
 - **Wortell CSP Tier 2 AdminAgents** — Owner role
 - **IngramMicroNL AdminAgents** — Support Request Contributor role
@@ -59,6 +60,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 ```
 
 **What Dry Run does:**
+
 - Validates all prerequisites (CSP relationship, group existence, permissions)
 - Shows what role assignments would be created
 - Shows what management group operations would be performed
@@ -66,28 +68,39 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 
 ## What the Script Does
 
-The script follows a **seven-phase process**:
+The script follows a **nine-phase process** (phases 0–8), aborting early only on critical failures:
 
-0. **Phase 0** — Verifies that an active CSP reseller relationship exists by testing Foreign Principal role assignment capability
-1. **Phase 1** — Retrieves all enabled subscriptions and identifies the current user
-2. **Phase 2** — Checks existing foreign principal role assignments (informational only)
-3. **Phase 3** — Verifies that the current user has Owner permissions on each subscription
-   - Subscriptions without Owner access are skipped with a warning
-4. **Phase 4** — Validates access rights by creating and removing a temporary management group
-5. **Phase 5** — Assigns configured roles to all management groups
-6. **Phase 6** — Assigns configured roles to all subscriptions
-7. **Phase 7** — Cleans up temporary resources and displays a summary
+| Phase | Purpose | Abort condition |
+| ----- | ------- | --------------- |
+| 0 | Verify active CSP relationship exists via Foreign Principal | No CSP relationship found |
+| 1 | Discover all enabled subscriptions and current user identity | — |
+| 2 | Check existing Foreign Principal role assignments (informational) | — |
+| 3 | Verify Owner access on each subscription; skip inaccessible ones | No accessible subscriptions |
+| 4 | Validate management group access by creating/removing a temp MG | — |
+| 5 | Assign configured roles to all management groups | — |
+| 6 | Assign configured roles to all subscriptions | — |
+| 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) | — |
+| 8 | Remove temporary resources and display summary | — |
+
+## Key Design Patterns
+
+- **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
+- **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
+- **Error accumulation:** Errors are collected into an array and reported in the final summary rather than halting execution mid-run.
+- **Counters:** The script tracks created vs. already-existing assignments separately for MGs and subscriptions.
 
 ## Output
 
 The script provides detailed progress logging at each step, including:
+
 - Number of subscriptions processed and skipped
 - Each role assignment created or already existing
 - Any errors encountered with descriptions
 - Final summary with success or warning status
 
 ## Example Output
-```
+
+```plaintext
 ================================================================================
 Summary
 ================================================================================
@@ -116,5 +129,6 @@ Summary
 ## Support
 
 For issues or questions about this script, refer to:
+
 - [IngramMicroNL AOBO Scripts](https://github.com/IngramMicroNL/Azure/tree/main/AOBO%20-%20AdminOnBehalfOf) (reference implementation)
 - [Microsoft AOBO Documentation](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-external-organizations)
