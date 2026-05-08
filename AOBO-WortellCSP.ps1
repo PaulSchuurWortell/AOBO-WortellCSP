@@ -22,6 +22,10 @@
     - Unrestricted Owner access to the Azure subscriptions and/or management groups being configured
 
 .CHANGELOG
+    v1.1 (May 8, 2026)
+    - Added Phase 7: Reservations Reader role assignment on Azure Reservations scope
+    - Added $ReservationGroups configuration section for reservation-scope assignments
+
     v1.0 (May 6, 2026)
     - Initial release
     - Implemented six-phase AOBO configuration script
@@ -65,6 +69,20 @@ $Groups = @(
     }
 )
 
+# Groups and roles to assign at the Azure Reservations scope (/providers/Microsoft.Capacity)
+$ReservationGroups = @(
+    @{
+        Name     = "Wortell CSP Tier 1 AdminAgents"
+        ObjectId = "2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7"
+        Roles    = @("Reservations Reader")
+    },
+    @{
+        Name     = "Wortell CSP Tier 2 AdminAgents"
+        ObjectId = "27f932e9-605d-4270-bf3f-a02249b1721c"
+        Roles    = @("Reservations Reader")
+    }
+)
+
 # =============================================================================
 # Initialize tracking variables
 # =============================================================================
@@ -77,6 +95,8 @@ $RoleAssignmentsCreated = 0
 $RoleAssignmentsExists = 0
 $MgRoleAssignmentsCreated = 0
 $MgRoleAssignmentsExists = 0
+$ReservationRoleAssignmentsCreated = 0
+$ReservationRoleAssignmentsExists = 0
 
 # =============================================================================
 # Phase 0: Verify active CSP reseller relationship
@@ -387,11 +407,56 @@ foreach ($Subscription in $ProcessedSubscriptions) {
 }
 
 # =============================================================================
-# Phase 7: Cleanup and summary
+# Phase 7: Role assignments on Azure Reservations scope
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 7] Cleanup and summary..."
+Write-Output "[Phase 7] Assigning roles on Azure Reservations scope..."
+Write-Output ""
+
+$ReservationScope = "/providers/Microsoft.Capacity"
+
+foreach ($Group in $ReservationGroups) {
+    foreach ($Role in $Group.Roles) {
+        try {
+            $RBACCheck = Get-AzRoleAssignment `
+                -ObjectId $Group.ObjectId `
+                -RoleDefinitionName $Role `
+                -Scope $ReservationScope `
+                -ErrorAction SilentlyContinue
+
+            if ($RBACCheck) {
+                Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on Reservations scope"
+                $ReservationRoleAssignmentsExists++
+            } else {
+                if ($DryRun) {
+                    Write-Output "  [DRY RUN] Would create role assignment: $Role for $($Group.Name) on Reservations scope"
+                    $ReservationRoleAssignmentsCreated++
+                } else {
+                    New-AzRoleAssignment `
+                        -ObjectId $Group.ObjectId `
+                        -RoleDefinitionName $Role `
+                        -Scope $ReservationScope `
+                        -ObjectType "ForeignGroup" `
+                        -ErrorAction Stop | Out-Null
+
+                    Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on Reservations scope"
+                    $ReservationRoleAssignmentsCreated++
+                }
+            }
+        } catch {
+            Write-Warning "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+            $Errors += "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+        }
+    }
+}
+
+# =============================================================================
+# Phase 8: Cleanup and summary
+# =============================================================================
+
+Write-Output ""
+Write-Output "[Phase 8] Cleanup and summary..."
 Write-Output ""
 
 try {
@@ -436,6 +501,15 @@ if ($DryRun) {
     Write-Output "  Sub role assignments created:   $RoleAssignmentsCreated"
 }
 Write-Output "  Sub role assignments (already exist): $RoleAssignmentsExists"
+Write-Output ""
+
+# Reservation Scope Role Assignments
+if ($DryRun) {
+    Write-Output "  Reservation role assignments to create:  $ReservationRoleAssignmentsCreated"
+} else {
+    Write-Output "  Reservation role assignments created:   $ReservationRoleAssignmentsCreated"
+}
+Write-Output "  Reservation role assignments (already exist): $ReservationRoleAssignmentsExists"
 
 if ($SkippedSubscriptions.Count -gt 0) {
     Write-Output ""
