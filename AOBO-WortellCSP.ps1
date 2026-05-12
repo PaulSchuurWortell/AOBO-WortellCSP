@@ -25,6 +25,7 @@
     v1.2 (May 12, 2026)
     - Phase 0: CSP relationship check now tests all foreign principals (all unique groups from $Groups and $ReservationGroups), not just the first one
     - Phase 3: Owner verification now accepts indirect ownership — via group membership or parent management group assignment
+    - Phase 3: Added -SkipOwnerCheck switch to bypass the pre-flight check entirely when inherited permissions are not correctly resolved
 
     v1.1 (May 8, 2026)
     - Added Phase 7: Reservations Reader role assignment on Azure Reservations scope
@@ -48,7 +49,13 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification = 'File must use UTF-8 without BOM for Invoke-Expression compatibility when downloading via Invoke-WebRequest')]
 param(
     [Parameter(Mandatory = $false)]
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # Skip the Phase 3 Owner pre-flight check and treat all subscriptions as accessible.
+    # Use when the running account has Owner via a parent management group and the check
+    # incorrectly marks subscriptions as inaccessible.
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipOwnerCheck
 )
 
 # =============================================================================
@@ -236,34 +243,53 @@ Write-Output ""
 Write-Output "[Phase 3] Verifying Owner permissions on subscriptions..."
 Write-Output ""
 
-# Fetch all effective Owner assignments once; -SignInName resolves group memberships
-try {
-    $UserOwnerAssignments = Get-AzRoleAssignment `
-        -SignInName $CurrentUser.UserPrincipalName `
-        -RoleDefinitionName "Owner" `
-        -ErrorAction Stop
-} catch {
-    Write-Warning "Unable to retrieve Owner role assignments: $_"
-    $UserOwnerAssignments = @()
-}
-
-foreach ($Subscription in $Subscriptions) {
-    $SubScope = "/subscriptions/$($Subscription.Id)"
-
-    # Accept Owner at: the exact subscription scope, root tenant scope (/), or any management group scope.
-    # MG Owner inherits down to child subscriptions; -SignInName above already resolved group memberships.
-    $OwnerCheck = $UserOwnerAssignments | Where-Object {
-        $_.Scope -eq $SubScope -or
-        $_.Scope -eq "/" -or
-        $_.Scope -like "/providers/Microsoft.Management/managementGroups/*"
+if ($SkipOwnerCheck) {
+    Write-Output "  Owner check skipped (-SkipOwnerCheck). Including all $($Subscriptions.Count) subscription(s)."
+    $ProcessedSubscriptions = @($Subscriptions)
+} else {
+    # Fallback: check whether the user has Owner on any management group.
+    # -SignInName uses the Azure assignedTo() filter which resolves group memberships.
+    # We check MG scopes explicitly because Get-AzRoleAssignment without -Scope only queries
+    # the current subscription context and never returns MG-level assignments.
+    $HasMgOwner = $false
+    try {
+        $AllMGs = Get-AzManagementGroup -ErrorAction Stop
+        foreach ($MG in $AllMGs) {
+            $mgScope = "/providers/Microsoft.Management/managementGroups/$($MG.Name)"
+            $mgCheck = Get-AzRoleAssignment `
+                -SignInName $CurrentUser.UserPrincipalName `
+                -RoleDefinitionName "Owner" `
+                -Scope $mgScope `
+                -ErrorAction SilentlyContinue
+            if ($mgCheck) {
+                $HasMgOwner = $true
+                Write-Output "  ✓ Owner found at management group: $($MG.DisplayName) — accepting all subscriptions"
+                break
+            }
+        }
+    } catch {
+        Write-Warning "Unable to query management group role assignments: $_"
     }
 
-    if ($OwnerCheck) {
-        Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
-        $ProcessedSubscriptions += $Subscription
-    } else {
-        Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
-        $SkippedSubscriptions += $Subscription
+    foreach ($Subscription in $Subscriptions) {
+        $SubScope = "/subscriptions/$($Subscription.Id)"
+
+        # -SignInName triggers the assignedTo() API filter which resolves group memberships.
+        # Per Azure RBAC API contract this also returns assignments inherited from parent scopes,
+        # but in practice MG inheritance is not always surfaced — hence the $HasMgOwner fallback above.
+        $OwnerCheck = Get-AzRoleAssignment `
+            -SignInName $CurrentUser.UserPrincipalName `
+            -RoleDefinitionName "Owner" `
+            -Scope $SubScope `
+            -ErrorAction SilentlyContinue
+
+        if ($OwnerCheck -or $HasMgOwner) {
+            Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
+            $ProcessedSubscriptions += $Subscription
+        } else {
+            Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
+            $SkippedSubscriptions += $Subscription
+        }
     }
 }
 

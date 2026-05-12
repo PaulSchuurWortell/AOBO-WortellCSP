@@ -45,8 +45,12 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 # Execute normally
 .\AOBO-WortellCSP.ps1
 
-# Or execute in dry-run mode
+# Execute in dry-run mode
 .\AOBO-WortellCSP.ps1 -DryRun
+
+# Skip Phase 3 Owner pre-flight check (use when Owner is assigned via a parent management group
+# and the check incorrectly marks subscriptions as inaccessible)
+.\AOBO-WortellCSP.ps1 -SkipOwnerCheck
 ```
 
 ### Dry Run Mode
@@ -75,7 +79,7 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 | 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; aborts on first failure | No CSP relationship found |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
-| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones | No accessible subscriptions |
+| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
 | 4 | Validate management group access by creating/removing a temp MG — indirect Owner (via group or root MG) is accepted because this is a real action test | — |
 | 5 | Assign configured roles to all management groups | — |
 | 6 | Assign configured roles to all subscriptions | — |
