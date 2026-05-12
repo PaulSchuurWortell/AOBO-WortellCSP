@@ -23,6 +23,7 @@
 
 .CHANGELOG
     v1.2 (May 12, 2026)
+    - Phase 0: CSP relationship check now tests all foreign principals (all unique groups from $Groups and $ReservationGroups), not just the first one
     - Phase 3: Owner verification now accepts indirect ownership — via group membership or parent management group assignment
 
     v1.1 (May 8, 2026)
@@ -115,6 +116,9 @@ Write-Output "==================================================================
 Write-Output ""
 Write-Output "[Phase 0] Verifying active CSP reseller relationship..."
 
+# Collect all unique foreign principals used across all phases
+$AllForeignGroups = ($Groups + $ReservationGroups) | Sort-Object -Property ObjectId -Unique
+
 # Get first available subscription for testing
 try {
     $TestSubscription = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" } | Select-Object -First 1
@@ -127,37 +131,36 @@ try {
     return
 }
 
-# Test Foreign Principal role assignment capability
-$TestGroup = $Groups[0]  # Use first Wortell group for testing
-$TestRole = "Reader"     # Use harmless Reader role for testing
+$TestRole  = "Reader"
 $TestScope = "/subscriptions/$($TestSubscription.Id)"
 
-Write-Output "  Testing Foreign Principal assignment on subscription: $($TestSubscription.Name)"
+Write-Output "  Testing Foreign Principal assignments on subscription: $($TestSubscription.Name)"
 
-try {
-    # Attempt to create a test role assignment
-    New-AzRoleAssignment `
-        -ObjectId $TestGroup.ObjectId `
-        -RoleDefinitionName $TestRole `
-        -Scope $TestScope `
-        -ObjectType "ForeignGroup" `
-        -ErrorAction Stop | Out-Null
+foreach ($Group in $AllForeignGroups) {
+    try {
+        New-AzRoleAssignment `
+            -ObjectId $Group.ObjectId `
+            -RoleDefinitionName $TestRole `
+            -Scope $TestScope `
+            -ObjectType "ForeignGroup" `
+            -ErrorAction Stop | Out-Null
 
-    Write-Output "  ✓ CSP reseller relationship verified"
+        Write-Output "  ✓ $($Group.Name)"
 
-    # Immediately remove the test assignment
-    Remove-AzRoleAssignment -ObjectId $TestGroup.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
-    Write-Output "  ✓ Test assignment cleaned up"
+        Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
 
-} catch {
-    Write-Output ""
-    Write-Error "Unable to create Foreign Principal role assignment. This typically means no active CSP reseller relationship exists between this tenant and the Wortell CSP partner tenant."
-    Write-Output ""
-    Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
-    Write-Output ""
-    Write-Error "Exiting script."
-    return
+    } catch {
+        Write-Output ""
+        Write-Error "Unable to create Foreign Principal role assignment for '$($Group.Name)' [$($Group.ObjectId)]. This typically means no active CSP reseller relationship exists or the group is not present as a guest in this tenant."
+        Write-Output ""
+        Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
+        Write-Output ""
+        Write-Error "Exiting script."
+        return
+    }
 }
+
+Write-Output "  ✓ CSP reseller relationship verified — all $($AllForeignGroups.Count) foreign principals confirmed"
 
 # =============================================================================
 # Phase 1: Retrieve subscriptions and current user

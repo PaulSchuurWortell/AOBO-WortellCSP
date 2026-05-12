@@ -72,7 +72,7 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship exists via Foreign Principal | No CSP relationship found |
+| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; aborts on first failure | No CSP relationship found |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
 | 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones | No accessible subscriptions |
