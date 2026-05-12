@@ -75,8 +75,8 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 | 0 | Verify active CSP relationship exists via Foreign Principal | No CSP relationship found |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
-| 3 | Verify Owner access on each subscription; skip inaccessible ones | No accessible subscriptions |
-| 4 | Validate management group access by creating/removing a temp MG | — |
+| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones | No accessible subscriptions |
+| 4 | Validate management group access by creating/removing a temp MG — indirect Owner (via group or root MG) is accepted because this is a real action test | — |
 | 5 | Assign configured roles to all management groups | — |
 | 6 | Assign configured roles to all subscriptions | — |
 | 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) | — |

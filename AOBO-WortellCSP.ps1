@@ -22,6 +22,9 @@
     - Unrestricted Owner access to the Azure subscriptions and/or management groups being configured
 
 .CHANGELOG
+    v1.2 (May 12, 2026)
+    - Phase 3: Owner verification now accepts indirect ownership — via group membership or parent management group assignment
+
     v1.1 (May 8, 2026)
     - Added Phase 7: Reservations Reader role assignment on Azure Reservations scope
     - Added $ReservationGroups configuration section for reservation-scope assignments
@@ -230,24 +233,33 @@ Write-Output ""
 Write-Output "[Phase 3] Verifying Owner permissions on subscriptions..."
 Write-Output ""
 
-foreach ($Subscription in $Subscriptions) {
-    try {
-        # Check if the current user has Owner role on this subscription
-        $OwnerCheck = Get-AzRoleAssignment `
-            -SignInName $CurrentUser.UserPrincipalName `
-            -RoleDefinitionName "Owner" `
-            -Scope "/subscriptions/$($Subscription.Id)" `
-            -ErrorAction SilentlyContinue
+# Fetch all effective Owner assignments once; -SignInName resolves group memberships
+try {
+    $UserOwnerAssignments = Get-AzRoleAssignment `
+        -SignInName $CurrentUser.UserPrincipalName `
+        -RoleDefinitionName "Owner" `
+        -ErrorAction Stop
+} catch {
+    Write-Warning "Unable to retrieve Owner role assignments: $_"
+    $UserOwnerAssignments = @()
+}
 
-        if ($OwnerCheck) {
-            Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
-            $ProcessedSubscriptions += $Subscription
-        } else {
-            Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
-            $SkippedSubscriptions += $Subscription
-        }
-    } catch {
-        Write-Warning "Error checking Owner status on $($Subscription.Name): $_"
+foreach ($Subscription in $Subscriptions) {
+    $SubScope = "/subscriptions/$($Subscription.Id)"
+
+    # Accept Owner at: the exact subscription scope, root tenant scope (/), or any management group scope.
+    # MG Owner inherits down to child subscriptions; -SignInName above already resolved group memberships.
+    $OwnerCheck = $UserOwnerAssignments | Where-Object {
+        $_.Scope -eq $SubScope -or
+        $_.Scope -eq "/" -or
+        $_.Scope -like "/providers/Microsoft.Management/managementGroups/*"
+    }
+
+    if ($OwnerCheck) {
+        Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
+        $ProcessedSubscriptions += $Subscription
+    } else {
+        Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
         $SkippedSubscriptions += $Subscription
     }
 }
