@@ -36,7 +36,7 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 ### Option 2: Download and Execute with Parameters
 
-For advanced usage with parameters like dry-run mode:
+For advanced usage with parameters:
 
 ```powershell
 # Download the script
@@ -51,6 +51,9 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 # Skip Phase 3 Owner pre-flight check (use when Owner is assigned via a parent management group
 # and the check incorrectly marks subscriptions as inaccessible)
 .\AOBO-WortellCSP.ps1 -SkipOwnerCheck
+
+# Show verbose output including full exception details on errors
+.\AOBO-WortellCSP.ps1 -Verbose
 ```
 
 ### Dry Run Mode
@@ -76,7 +79,7 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; aborts on first failure | No CSP relationship found |
+| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; aborts on first failure | No CSP relationship found |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
 | 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
@@ -95,12 +98,16 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 
 ## Output
 
+The script version (format `YYYYMMDDnnn`) is printed in the opening banner on every run.
+
 The script provides detailed progress logging at each step, including:
 
 - Number of subscriptions processed and skipped
 - Each role assignment created or already existing
 - Any errors encountered with descriptions
 - Final summary with success or warning status
+
+Run with `-Verbose` to see full exception details whenever an error is caught.
 
 ## Example Output
 

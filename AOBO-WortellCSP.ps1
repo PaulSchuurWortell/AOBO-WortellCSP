@@ -59,6 +59,12 @@ param(
 )
 
 # =============================================================================
+# Version
+# =============================================================================
+
+$Version = "20260526001"
+
+# =============================================================================
 # Configuration: Groups and Role Assignments
 # =============================================================================
 
@@ -115,7 +121,7 @@ $ReservationRoleAssignmentsExists = 0
 
 Write-Output ""
 Write-Output "================================================================================"
-Write-Output "AOBO Configuration Script - Wortell CSP"
+Write-Output "AOBO Configuration Script - Wortell CSP  (version $Version)"
 if ($DryRun) {
     Write-Output "DRY RUN MODE - No changes will be made"
 }

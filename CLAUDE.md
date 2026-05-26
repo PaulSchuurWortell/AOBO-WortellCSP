@@ -14,6 +14,12 @@ PowerShell script that automates Azure AOBO (Admin On Behalf Of) role assignment
 
 # Execute (requires connected Azure context with Global Admin rights)
 .\AOBO-WortellCSP.ps1
+
+# Skip Phase 3 Owner pre-flight check (use when Owner is inherited via parent MG)
+.\AOBO-WortellCSP.ps1 -SkipOwnerCheck
+
+# Show full exception details on any caught error
+.\AOBO-WortellCSP.ps1 -Verbose
 ```
 
 The script can also be executed directly via `Invoke-Expression (Invoke-WebRequest -Uri "...").Content` from Azure Cloud Shell without downloading.
@@ -28,25 +34,29 @@ The script can also be executed directly via `Invoke-Expression (Invoke-WebReque
 
 PSScriptAnalyzer is used for linting but `Run-lint.ps1` is gitignored and not checked in. The script uses `[Diagnostics.CodeAnalysis.SuppressMessageAttribute]` at the top to suppress the BOM encoding rule (the file is intentionally UTF-8 without BOM for `Invoke-Expression` compatibility).
 
-## Architecture: 8-Phase Execution Model
+## Architecture: 9-Phase Execution Model
 
 The script runs sequentially through phases — aborting early only on critical failures:
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; aborts on first failure | No CSP relationship found |
+| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; `RoleAssignmentExists` is treated as success; `AuthorizationFailed` and other errors produce distinct messages; full exception shown with `-Verbose`; aborts on first failure | No CSP relationship found |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
-| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones | No accessible subscriptions |
+| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance (explicit MG-scope fallback query); skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
 | 4 | Validate management group access by creating/removing a temp MG — indirect Owner (via group or root MG) passes because this is a real action test | — |
 | 5 | Assign configured roles to all management groups | — |
 | 6 | Assign configured roles to all subscriptions | — |
 | 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) | — |
 | 8 | Remove temporary resources and display summary | — |
 
+## Versioning
+
+The script exposes a `$Version` variable in `YYYYMMDDnnn` format (e.g. `20260526001`) declared near the top of the file. The version is printed in the opening banner on every run. Increment the sequence (`nnn`) for multiple releases on the same date.
+
 ## Group Configuration
 
-The three groups and their roles are hardcoded near the top of [AOBO-WortellCSP.ps1](AOBO-WortellCSP.ps1) (around line 50):
+The three groups and their roles are hardcoded near the top of [AOBO-WortellCSP.ps1](AOBO-WortellCSP.ps1) (around line 75):
 
 - **Wortell CSP Tier 1 AdminAgents** — Owner
 - **Wortell CSP Tier 2 AdminAgents** — Owner  
