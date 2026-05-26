@@ -157,13 +157,30 @@ foreach ($Group in $AllForeignGroups) {
         Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
 
     } catch {
-        Write-Output ""
-        Write-Error "Unable to create Foreign Principal role assignment for '$($Group.Name)' [$($Group.ObjectId)]. This typically means no active CSP reseller relationship exists or the group is not present as a guest in this tenant."
-        Write-Output ""
-        Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
-        Write-Output ""
-        Write-Error "Exiting script."
-        return
+        Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
+
+        if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
+            # An existing assignment proves the foreign principal resolves — treat as success
+            Write-Output "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+        } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
+            Write-Output ""
+            Write-Error "Authorization failed creating test assignment for '$($Group.Name)' [$($Group.ObjectId)]. The running account lacks role-assignment write access on subscription '$($TestSubscription.Name)'."
+            Write-Output ""
+            Write-Error "Required action: Ensure the running account has Owner or User Access Administrator on the test subscription, and that an active CSP reseller relationship exists."
+            Write-Output ""
+            Write-Error "Exiting script."
+            return
+        } else {
+            Write-Output ""
+            Write-Error "Unable to create Foreign Principal role assignment for '$($Group.Name)' [$($Group.ObjectId)]: $($_.Exception.Message)"
+            Write-Output ""
+            Write-Error "This typically means no active CSP reseller relationship exists or the group is not present as a guest in this tenant."
+            Write-Output ""
+            Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
+            Write-Output ""
+            Write-Error "Exiting script."
+            return
+        }
     }
 }
 
