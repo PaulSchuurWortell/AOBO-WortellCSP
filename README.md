@@ -79,14 +79,14 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; aborts on first failure | No CSP relationship found |
+| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; failed principals are excluded from role assignments rather than aborting; only aborts if no principals pass | No principals validated |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
 | 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
 | 4 | Validate management group access by creating/removing a temp MG — indirect Owner (via group or root MG) is accepted because this is a real action test | — |
 | 5 | Assign configured roles to all management groups | — |
 | 6 | Assign configured roles to all subscriptions | — |
-| 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) | — |
+| 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) for validated principals only; failures recorded as non-blocking warnings | — |
 | 8 | Remove temporary resources and display summary | — |
 
 ## Key Design Patterns
@@ -95,6 +95,8 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 - **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
 - **Error accumulation:** Errors are collected into an array and reported in the final summary rather than halting execution mid-run.
 - **Counters:** The script tracks created vs. already-existing assignments separately for MGs and subscriptions.
+- **Validated principals:** Phase 0 tests each foreign principal individually; only those that pass are used in Phases 5, 6, and 7. A partial failure warns and continues rather than aborting.
+- **Non-blocking reservation warnings:** Phase 7 failures are collected separately and do not affect the SUCCESS/FAILURE outcome.
 
 ## Output
 

@@ -22,6 +22,12 @@
     - Unrestricted Owner access to the Azure subscriptions and/or management groups being configured
 
 .CHANGELOG
+    v1.3 (June 9, 2026)
+    - Phase 0: Non-aborting group availability check — all foreign principals are tested; validated ones collected in $ValidatedGroups; script only aborts if zero principals pass
+    - Phase 5/6: Role assignments now iterate $ValidatedGroups instead of $Groups — excluded principals are skipped
+    - Phase 7: Iterates $ValidatedReservationGroups; failures collected in $ReservationWarnings instead of $Errors — does not affect SUCCESS/FAILURE status
+    - Phase 8: Reservation warnings shown in a separate summary section; SUCCESS reported even when reservation warnings are present
+
     v1.2 (May 12, 2026)
     - Phase 0: CSP relationship check now tests all foreign principals (all unique groups from $Groups and $ReservationGroups), not just the first one
     - Phase 3: Owner verification now accepts indirect ownership — via group membership or parent management group assignment
@@ -62,7 +68,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260526001"
+$Version = "20260609001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -104,16 +110,17 @@ $ReservationGroups = @(
 # Initialize tracking variables
 # =============================================================================
 
-$Errors              = @()
-$SkippedSubscriptions = @()
-$ProcessedSubscriptions = @()
-$ProcessedManagementGroups = @()
-$RoleAssignmentsCreated = 0
-$RoleAssignmentsExists = 0
-$MgRoleAssignmentsCreated = 0
-$MgRoleAssignmentsExists = 0
+$Errors                        = @()
+$ReservationWarnings           = @()
+$SkippedSubscriptions          = @()
+$ProcessedSubscriptions        = @()
+$ProcessedManagementGroups     = @()
+$RoleAssignmentsCreated        = 0
+$RoleAssignmentsExists         = 0
+$MgRoleAssignmentsCreated      = 0
+$MgRoleAssignmentsExists       = 0
 $ReservationRoleAssignmentsCreated = 0
-$ReservationRoleAssignmentsExists = 0
+$ReservationRoleAssignmentsExists  = 0
 
 # =============================================================================
 # Phase 0: Verify active CSP reseller relationship
@@ -149,6 +156,8 @@ $TestScope = "/subscriptions/$($TestSubscription.Id)"
 
 Write-Output "  Testing Foreign Principal assignments on subscription: $($TestSubscription.Name)"
 
+$ValidatedObjectIds = @()
+
 foreach ($Group in $AllForeignGroups) {
     try {
         New-AzRoleAssignment `
@@ -159,6 +168,7 @@ foreach ($Group in $AllForeignGroups) {
             -ErrorAction Stop | Out-Null
 
         Write-Output "  ✓ $($Group.Name)"
+        $ValidatedObjectIds += $Group.ObjectId
 
         Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
 
@@ -166,31 +176,36 @@ foreach ($Group in $AllForeignGroups) {
         Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
 
         if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-            # An existing assignment proves the foreign principal resolves — treat as success
             Write-Output "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+            $ValidatedObjectIds += $Group.ObjectId
         } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-            Write-Output ""
-            Write-Error "Authorization failed creating test assignment for '$($Group.Name)' [$($Group.ObjectId)]. The running account lacks role-assignment write access on subscription '$($TestSubscription.Name)'."
-            Write-Output ""
-            Write-Error "Required action: Ensure the running account has Owner or User Access Administrator on the test subscription, and that an active CSP reseller relationship exists."
-            Write-Output ""
-            Write-Error "Exiting script."
-            return
+            Write-Warning "  ✗ $($Group.Name) — Authorization failed: running account lacks role-assignment write access on '$($TestSubscription.Name)'. This group will be excluded."
         } else {
-            Write-Output ""
-            Write-Error "Unable to create Foreign Principal role assignment for '$($Group.Name)' [$($Group.ObjectId)]: $($_.Exception.Message)"
-            Write-Output ""
-            Write-Error "This typically means no active CSP reseller relationship exists or the group is not present as a guest in this tenant."
-            Write-Output ""
-            Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
-            Write-Output ""
-            Write-Error "Exiting script."
-            return
+            Write-Warning "  ✗ $($Group.Name) [$($Group.ObjectId)] — $($_.Exception.Message). This group will be excluded."
         }
     }
 }
 
-Write-Output "  ✓ CSP reseller relationship verified — all $($AllForeignGroups.Count) foreign principals confirmed"
+if ($ValidatedObjectIds.Count -eq 0) {
+    Write-Output ""
+    Write-Error "No foreign principals could be validated. Ensure an active CSP reseller relationship exists and the running account has role-assignment write access on subscription '$($TestSubscription.Name)'."
+    Write-Output ""
+    Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
+    Write-Output ""
+    Write-Error "Exiting script."
+    return
+}
+
+# Derive validated group lists from source arrays to preserve correct role definitions
+$ValidatedGroups            = $Groups            | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
+$ValidatedReservationGroups = $ReservationGroups | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
+
+if ($ValidatedObjectIds.Count -lt $AllForeignGroups.Count) {
+    $ExcludedCount = $AllForeignGroups.Count - $ValidatedObjectIds.Count
+    Write-Warning "  $ExcludedCount of $($AllForeignGroups.Count) foreign principal(s) could not be validated and will be excluded from all role assignments."
+}
+
+Write-Output "  ✓ CSP reseller relationship verified — $($ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principals confirmed"
 
 # =============================================================================
 # Phase 1: Retrieve subscriptions and current user
@@ -374,7 +389,7 @@ try {
 foreach ($ManagementGroup in $ManagementGroups) {
     $ProcessedManagementGroups += $ManagementGroup
 
-    foreach ($Group in $Groups) {
+    foreach ($Group in $ValidatedGroups) {
         foreach ($Role in $Group.Roles) {
             $Scope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
 
@@ -427,7 +442,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
         Write-Output ""
         Write-Output "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
 
-        foreach ($Group in $Groups) {
+        foreach ($Group in $ValidatedGroups) {
             foreach ($Role in $Group.Roles) {
                 $Scope = "/subscriptions/$($Subscription.Id)"
 
@@ -480,7 +495,7 @@ Write-Output ""
 
 $ReservationScope = "/providers/Microsoft.Capacity"
 
-foreach ($Group in $ReservationGroups) {
+foreach ($Group in $ValidatedReservationGroups) {
     foreach ($Role in $Group.Roles) {
         try {
             $RBACCheck = Get-AzRoleAssignment `
@@ -510,7 +525,7 @@ foreach ($Group in $ReservationGroups) {
             }
         } catch {
             Write-Warning "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
-            $Errors += "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+            $ReservationWarnings += "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
         }
     }
 }
@@ -591,12 +606,22 @@ if ($Errors.Count -gt 0) {
     }
 }
 
+if ($ReservationWarnings.Count -gt 0) {
+    Write-Output ""
+    Write-Output "  Reservation scope warnings (non-blocking):"
+    foreach ($WarningMessage in $ReservationWarnings) {
+        Write-Output "    - $WarningMessage"
+    }
+}
+
 Write-Output ""
 
 if ($Errors.Count -eq 0) {
     Write-Output "================================================================================"
     if ($DryRun) {
         Write-Output "✓ DRY RUN SUCCESS: All prerequisites validated, ready for actual deployment"
+    } elseif ($ReservationWarnings.Count -gt 0) {
+        Write-Output "✓ SUCCESS: AOBO configuration completed — $($ReservationWarnings.Count) reservation warning(s), see above"
     } else {
         Write-Output "✓ SUCCESS: AOBO configuration completed without errors"
     }
