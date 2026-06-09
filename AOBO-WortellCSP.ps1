@@ -167,7 +167,7 @@ foreach ($Group in $AllForeignGroups) {
             -ObjectType "ForeignGroup" `
             -ErrorAction Stop | Out-Null
 
-        Write-Output "  ✓ $($Group.Name)"
+        Write-Verbose "  ✓ $($Group.Name)"
         $ValidatedObjectIds += $Group.ObjectId
 
         Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
@@ -176,7 +176,7 @@ foreach ($Group in $AllForeignGroups) {
         Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
 
         if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-            Write-Output "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+            Write-Verbose "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
             $ValidatedObjectIds += $Group.ObjectId
         } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
             Write-Warning "  ✗ $($Group.Name) — Authorization failed: running account lacks role-assignment write access on '$($TestSubscription.Name)'. This group will be excluded."
@@ -251,17 +251,16 @@ foreach ($Group in $Groups) {
         $ExistingAssignments = Get-AzRoleAssignment -ObjectId $Group.ObjectId -ErrorAction SilentlyContinue
 
         if ($ExistingAssignments) {
-            Write-Output "  → $($Group.Name): $($ExistingAssignments.Count) existing role assignment(s) found"
+            Write-Verbose "  → $($Group.Name): $($ExistingAssignments.Count) existing role assignment(s) found"
         } else {
-            Write-Output "  → $($Group.Name): No existing role assignments found"
+            Write-Verbose "  → $($Group.Name): No existing role assignments found"
         }
     } catch {
-        Write-Output "  → $($Group.Name): Unable to check existing assignments (this is normal for new setups)"
+        Write-Verbose "  → $($Group.Name): Unable to check existing assignments (this is normal for new setups)"
     }
 }
 
-Write-Output ""
-Write-Output "  Note: Phase 0 already validated CSP relationship and foreign group resolution"
+Write-Verbose "  Note: Phase 0 already validated CSP relationship and foreign group resolution"
 
 if ($InvalidGroups.Count -gt 0) {
     Write-Output ""
@@ -322,7 +321,7 @@ if ($SkipOwnerCheck) {
             -ErrorAction SilentlyContinue
 
         if ($OwnerCheck -or $HasMgOwner) {
-            Write-Output "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
+            Write-Verbose "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
             $ProcessedSubscriptions += $Subscription
         } else {
             Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
@@ -402,7 +401,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     -ErrorAction SilentlyContinue
 
                 if ($RBACCheck) {
-                    Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
+                    Write-Verbose "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
                     $MgRoleAssignmentsExists++
                 } else {
                     if ($DryRun) {
@@ -439,8 +438,8 @@ Write-Output ""
 foreach ($Subscription in $ProcessedSubscriptions) {
     try {
         Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
-        Write-Output ""
-        Write-Output "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
+        Write-Verbose ""
+        Write-Verbose "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
 
         foreach ($Group in $ValidatedGroups) {
             foreach ($Role in $Group.Roles) {
@@ -455,7 +454,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         -ErrorAction SilentlyContinue
 
                     if ($RBACCheck) {
-                        Write-Output "    → Role assignment already exists: $Role for $($Group.Name)"
+                        Write-Verbose "    → Role assignment already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
                     } else {
                         if ($DryRun) {
@@ -505,7 +504,7 @@ foreach ($Group in $ValidatedReservationGroups) {
                 -ErrorAction SilentlyContinue
 
             if ($RBACCheck) {
-                Write-Output "  → Role assignment already exists: $Role for $($Group.Name) on Reservations scope"
+                Write-Verbose "  → Role assignment already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
             } else {
                 if ($DryRun) {
