@@ -15,11 +15,11 @@ The script ensures these groups have the appropriate permissions on all manageme
 ## Prerequisites
 
 - **Azure Cloud Shell** (recommended) or local PowerShell environment with Az module
-- **Global Administrator** rights on the customer Azure tenant
 - **Active connection to Azure** (`Connect-AzAccount`)
-- **Active CSP reseller relationship** between the customer tenant and Wortell CSP partner tenant
-- **Unrestricted Owner access** to the Azure subscriptions and/or management groups being configured
-- **AOBO groups must be invited as guests** in the customer tenant:
+- **Owner or User Access Administrator at the root management group scope** on the customer tenant 
+  - In practice this is obtained by using the **Elevate access** button in Azure AD → Properties, which is only available to **Global Administrators**. Once elevated, the Global Admin has User Access Administrator at root scope.
+  - If a customer has already granted you Owner at root management group scope directly, Global Administrator is not required.
+- **Active GDAP relationship** with both Wortell and Ingram Micro — accepting GDAP automatically registers the following groups as guest service principals in the customer tenant (no manual invitation needed):
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
   - IngramMicroNL AdminAgents (`34c4dd11-78c0-41e5-8370-c6dbf16bc3e9`)
