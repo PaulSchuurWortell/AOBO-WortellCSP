@@ -52,6 +52,10 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 # and the check incorrectly marks subscriptions as inaccessible)
 .\AOBO-WortellCSP.ps1 -SkipOwnerCheck
 
+# Skip Phase 0 foreign principal validation (use when GDAP is confirmed established for all
+# principals but the test-assignment check is failing due to API limitations)
+.\AOBO-WortellCSP.ps1 -SkipPrincipalCheck
+
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
 ```
@@ -79,7 +83,7 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; failed principals are excluded from role assignments rather than aborting; only aborts if no principals pass | No principals validated |
+| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; failed principals are excluded from role assignments rather than aborting; only aborts if no principals pass. Use `-SkipPrincipalCheck` to bypass entirely and accept all configured groups. | No principals validated (unless `-SkipPrincipalCheck`) |
 | 1 | Discover all enabled subscriptions and current user identity | — |
 | 2 | Check existing Foreign Principal role assignments (informational) | — |
 | 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
@@ -95,7 +99,7 @@ The script follows a **nine-phase process** (phases 0–8), aborting early only 
 - **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
 - **Error accumulation:** Errors are collected into an array and reported in the final summary rather than halting execution mid-run.
 - **Counters:** The script tracks created vs. already-existing assignments separately for MGs and subscriptions.
-- **Validated principals:** Phase 0 tests each foreign principal individually; only those that pass are used in Phases 5, 6, and 7. A partial failure warns and continues rather than aborting.
+- **Validated principals:** Phase 0 tests each foreign principal individually; only those that pass are used in Phases 5, 6, and 7. A partial failure warns and continues rather than aborting. Use `-SkipPrincipalCheck` to skip the test entirely when GDAP is confirmed but the programmatic check fails.
 - **Non-blocking reservation warnings:** Phase 7 failures are collected separately and do not affect the SUCCESS/FAILURE outcome.
 
 ## Output

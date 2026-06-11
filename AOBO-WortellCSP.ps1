@@ -61,14 +61,20 @@ param(
     # Use when the running account has Owner via a parent management group and the check
     # incorrectly marks subscriptions as inaccessible.
     [Parameter(Mandatory = $false)]
-    [switch]$SkipOwnerCheck
+    [switch]$SkipOwnerCheck,
+
+    # Skip the Phase 0 foreign principal validation test and treat all configured groups as valid.
+    # Use when GDAP is confirmed established for all principals but the test-assignment fails
+    # (e.g. insufficient write access on the test subscription, or a known API quirk).
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipPrincipalCheck
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260609001"
+$Version = "20260611001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -139,73 +145,79 @@ Write-Output "[Phase 0] Verifying active CSP reseller relationship..."
 # Collect all unique foreign principals used across all phases
 $AllForeignGroups = ($Groups + $ReservationGroups) | Sort-Object -Property ObjectId -Unique
 
-# Get first available subscription for testing
-try {
-    $TestSubscription = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" } | Select-Object -First 1
-    if (-not $TestSubscription) {
-        Write-Error "No enabled subscriptions found to perform reseller relationship check"
+if ($SkipPrincipalCheck) {
+    Write-Output "  Skipping foreign principal validation (-SkipPrincipalCheck). All $($AllForeignGroups.Count) configured groups accepted."
+    $ValidatedGroups            = $Groups
+    $ValidatedReservationGroups = $ReservationGroups
+} else {
+    # Get first available subscription for testing
+    try {
+        $TestSubscription = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" } | Select-Object -First 1
+        if (-not $TestSubscription) {
+            Write-Error "No enabled subscriptions found to perform reseller relationship check"
+            return
+        }
+    } catch {
+        Write-Error "Failed to retrieve subscriptions for reseller relationship check: $_"
         return
     }
-} catch {
-    Write-Error "Failed to retrieve subscriptions for reseller relationship check: $_"
-    return
-}
 
-$TestRole  = "Reader"
-$TestScope = "/subscriptions/$($TestSubscription.Id)"
+    $TestRole  = "Reader"
+    $TestScope = "/subscriptions/$($TestSubscription.Id)"
 
-Write-Output "  Testing Foreign Principal assignments on subscription: $($TestSubscription.Name)"
+    Write-Output "  Testing Foreign Principal assignments on subscription: $($TestSubscription.Name)"
 
-$ValidatedObjectIds = @()
+    $ValidatedObjectIds = @()
 
-foreach ($Group in $AllForeignGroups) {
-    try {
-        New-AzRoleAssignment `
-            -ObjectId $Group.ObjectId `
-            -RoleDefinitionName $TestRole `
-            -Scope $TestScope `
-            -ObjectType "ForeignGroup" `
-            -ErrorAction Stop | Out-Null
+    foreach ($Group in $AllForeignGroups) {
+        try {
+            New-AzRoleAssignment `
+                -ObjectId $Group.ObjectId `
+                -RoleDefinitionName $TestRole `
+                -Scope $TestScope `
+                -ObjectType "ForeignGroup" `
+                -ErrorAction Stop | Out-Null
 
-        Write-Verbose "  ✓ $($Group.Name)"
-        $ValidatedObjectIds += $Group.ObjectId
-
-        Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
-
-    } catch {
-        Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
-
-        if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-            Write-Verbose "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+            Write-Verbose "  ✓ $($Group.Name)"
             $ValidatedObjectIds += $Group.ObjectId
-        } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-            Write-Warning "  ✗ $($Group.Name) — Authorization failed: running account lacks role-assignment write access on '$($TestSubscription.Name)'. This group will be excluded."
-        } else {
-            Write-Warning "  ✗ $($Group.Name) [$($Group.ObjectId)] — $($_.Exception.Message). This group will be excluded."
+
+            Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
+
+        } catch {
+            Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
+
+            if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
+                Write-Verbose "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+                $ValidatedObjectIds += $Group.ObjectId
+            } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
+                Write-Warning "  ✗ $($Group.Name) — Authorization failed: running account lacks role-assignment write access on '$($TestSubscription.Name)'. This group will be excluded."
+            } else {
+                Write-Warning "  ✗ $($Group.Name) [$($Group.ObjectId)] — $($_.Exception.Message). This group will be excluded."
+            }
         }
     }
+
+    if ($ValidatedObjectIds.Count -eq 0) {
+        Write-Output ""
+        Write-Error "No foreign principals could be validated. Ensure an active CSP reseller relationship exists and the running account has role-assignment write access on subscription '$($TestSubscription.Name)'."
+        Write-Output ""
+        Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
+        Write-Output ""
+        Write-Error "Exiting script."
+        return
+    }
+
+    # Derive validated group lists from source arrays to preserve correct role definitions
+    $ValidatedGroups            = $Groups            | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
+    $ValidatedReservationGroups = $ReservationGroups | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
+
+    if ($ValidatedObjectIds.Count -lt $AllForeignGroups.Count) {
+        $ExcludedCount = $AllForeignGroups.Count - $ValidatedObjectIds.Count
+        Write-Warning "  $ExcludedCount of $($AllForeignGroups.Count) foreign principal(s) could not be validated and will be excluded from all role assignments."
+    }
+
+    Write-Output "  ✓ CSP reseller relationship verified — $($ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principals confirmed"
 }
-
-if ($ValidatedObjectIds.Count -eq 0) {
-    Write-Output ""
-    Write-Error "No foreign principals could be validated. Ensure an active CSP reseller relationship exists and the running account has role-assignment write access on subscription '$($TestSubscription.Name)'."
-    Write-Output ""
-    Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
-    Write-Output ""
-    Write-Error "Exiting script."
-    return
-}
-
-# Derive validated group lists from source arrays to preserve correct role definitions
-$ValidatedGroups            = $Groups            | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
-$ValidatedReservationGroups = $ReservationGroups | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
-
-if ($ValidatedObjectIds.Count -lt $AllForeignGroups.Count) {
-    $ExcludedCount = $AllForeignGroups.Count - $ValidatedObjectIds.Count
-    Write-Warning "  $ExcludedCount of $($AllForeignGroups.Count) foreign principal(s) could not be validated and will be excluded from all role assignments."
-}
-
-Write-Output "  ✓ CSP reseller relationship verified — $($ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principals confirmed"
 
 # =============================================================================
 # Phase 1: Retrieve subscriptions and current user
