@@ -2,7 +2,7 @@
 
 ## Introduction
 
-**Admin On Behalf Of (AOBO)** is a security model in Azure that allows Managed Service Providers (MSPs) to manage customer Azure subscriptions on their behalf. This script automates the configuration of AOBO role assignments across all subscriptions in a customer tenant.
+**Admin On Behalf Of (AOBO)** is a security model in Azure that allows Managed Service Providers (MSPs) to manage customer Azure subscriptions on their behalf. This script automates the configuration of AOBO role assignments across all subscriptions and management groups in a customer tenant.
 
 The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
@@ -12,11 +12,40 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 The script ensures these groups have the appropriate permissions on all management groups and subscriptions, enabling support teams to assist customers without requiring guest invitations.
 
+---
+
+## Getting Started: Run via Azure Cloud Shell
+
+The recommended and easiest way to run this script is directly from **Azure Cloud Shell** — no downloads or local setup needed.
+
+### Step 1 — Open the customer tenant in the Azure portal
+
+1. Go to [portal.azure.com](https://portal.azure.com)
+2. In the top-right corner, click your account name and select **Switch directory**
+3. Choose the **customer tenant** you want to configure
+
+### Step 2 — Open Cloud Shell in PowerShell mode
+
+1. Click the **Cloud Shell** button ( `>_` ) in the top navigation bar
+2. If this is your first time, Azure will ask you to create a storage account — click **Create storage** and wait
+3. If the shell opens in **Bash** mode, switch to **PowerShell** using the dropdown in the Cloud Shell toolbar (top-left of the shell panel)
+4. Wait for the PowerShell prompt to appear
+
+### Step 3 — Run the script
+
+Paste and run:
+
+```powershell
+Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content
+```
+
+---
+
 ## Prerequisites
 
 - **Azure Cloud Shell** (recommended) or local PowerShell environment with Az module
 - **Active connection to Azure** (`Connect-AzAccount`)
-- **Owner or User Access Administrator at the root management group scope** on the customer tenant 
+- **Owner or User Access Administrator at the root management group scope** on the customer tenant
   - In practice this is obtained by using the **Elevate access** button in Azure AD → Properties, which is only available to **Global Administrators**. Once elevated, the Global Admin has User Access Administrator at root scope.
   - If a customer has already granted you Owner at root management group scope directly, Global Administrator is not required.
 - **Active GDAP relationship** with both Wortell and Ingram Micro — accepting GDAP automatically registers the following groups as guest service principals in the customer tenant (no manual invitation needed):
@@ -24,37 +53,32 @@ The script ensures these groups have the appropriate permissions on all manageme
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
   - IngramMicroNL AdminAgents (`34c4dd11-78c0-41e5-8370-c6dbf16bc3e9`)
 
-## Usage
+---
 
-### Option 1: Direct Execution (Recommended)
+## Usage with Parameters
 
-Open **Azure Cloud Shell** (PowerShell) and paste this command:
+For advanced usage, download the script first:
 
 ```powershell
-Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -UseBasicParsing).Content
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -OutFile "AOBO-WortellCSP.ps1"
 ```
 
-### Option 2: Download and Execute with Parameters
-
-For advanced usage with parameters:
+Then run with any combination of parameters:
 
 ```powershell
-# Download the script
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -OutFile "AOBO-WortellCSP.ps1"
-
 # Execute normally
 .\AOBO-WortellCSP.ps1
 
-# Execute in dry-run mode
+# Validate without making any changes
 .\AOBO-WortellCSP.ps1 -DryRun
 
-# Skip Phase 3 Owner pre-flight check (use when Owner is assigned via a parent management group
-# and the check incorrectly marks subscriptions as inaccessible)
-.\AOBO-WortellCSP.ps1 -SkipOwnerCheck
+# Pre-validate that all foreign principals can receive assignments before proceeding
+# (use when GDAP registration is uncertain; omit if confirmed but API test fails)
+.\AOBO-WortellCSP.ps1 -PrincipalCheck
 
-# Skip Phase 0 foreign principal validation (use when GDAP is confirmed established for all
-# principals but the test-assignment check is failing due to API limitations)
-.\AOBO-WortellCSP.ps1 -SkipPrincipalCheck
+# Pre-verify Owner access on each subscription before assigning roles
+# (use when you want to filter out inaccessible subscriptions upfront)
+.\AOBO-WortellCSP.ps1 -OwnerCheck
 
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
@@ -65,42 +89,39 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO
 To validate prerequisites without making any changes:
 
 ```powershell
-# Download first, then run with -DryRun
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PaulSchuurWortell/AOBO-WortellCSP/main/AOBO-WortellCSP.ps1" -OutFile "AOBO-WortellCSP.ps1"
 .\AOBO-WortellCSP.ps1 -DryRun
 ```
 
 **What Dry Run does:**
 
-- Validates all prerequisites (CSP relationship, group existence, permissions)
 - Shows what role assignments would be created
-- Shows what management group operations would be performed
+- Shows what management groups would be processed
 - **No actual changes are made to your Azure environment**
+
+---
 
 ## What the Script Does
 
-The script follows a **nine-phase process** (phases 0–8), aborting early only on critical failures:
+The script runs through **four phases**, then prints a summary. It aborts early only on critical failures:
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 0 | Verify active CSP relationship and guest presence by test-assigning each unique foreign principal; distinguishes `RoleAssignmentExists` (treated as success), `AuthorizationFailed`, and other errors; full exception shown with `-Verbose`; failed principals are excluded from role assignments rather than aborting; only aborts if no principals pass. Use `-SkipPrincipalCheck` to bypass entirely and accept all configured groups. | No principals validated (unless `-SkipPrincipalCheck`) |
-| 1 | Discover all enabled subscriptions and current user identity | — |
-| 2 | Check existing Foreign Principal role assignments (informational) | — |
-| 3 | Verify effective Owner access on each subscription — accepts direct assignment, group membership, or parent MG inheritance; skip inaccessible ones. Use `-SkipOwnerCheck` to bypass entirely. | No accessible subscriptions |
-| 4 | Validate management group access by creating/removing a temp MG — indirect Owner (via group or root MG) is accepted because this is a real action test | — |
-| 5 | Assign configured roles to all management groups for validated principals only | — |
-| 6 | Assign configured roles to all subscriptions for validated principals only | — |
-| 7 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`) for validated principals only; failures recorded as non-blocking warnings | — |
-| 8 | Remove temporary resources and display summary | — |
+| 1 | Discover enabled subscriptions and current user identity; optionally validate foreign principals (`-PrincipalCheck`) or verify Owner access per subscription (`-OwnerCheck`) | No enabled subscriptions; or `-PrincipalCheck` used and no principals pass |
+| 2 | Assign configured roles to all management groups; `PrincipalNotFound` excludes the group from all remaining phases (no retry); `AuthorizationFailed` recorded as a non-blocking warning | — |
+| 3 | Assign configured roles to all subscriptions (or only those passing `-OwnerCheck`) | — |
+| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); failures recorded as non-blocking warnings | — |
+| Summary | Display results — MG and subscription counts, role assignment totals, skipped principals, and any warnings or errors | — |
+
+---
 
 ## Key Design Patterns
 
 - **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
 - **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
-- **Error accumulation:** Errors are collected into an array and reported in the final summary rather than halting execution mid-run.
-- **Counters:** The script tracks created vs. already-existing assignments separately for MGs and subscriptions.
-- **Validated principals:** Phase 0 tests each foreign principal individually; only those that pass are used in Phases 5, 6, and 7. A partial failure warns and continues rather than aborting. Use `-SkipPrincipalCheck` to skip the test entirely when GDAP is confirmed but the programmatic check fails.
-- **Non-blocking reservation warnings:** Phase 7 failures are collected separately and do not affect the SUCCESS/FAILURE outcome.
+- **Graceful principal handling:** If a foreign principal is not found in the tenant during assignment, it is skipped for all remaining phases without retrying. Use `-PrincipalCheck` for early detection.
+- **Non-blocking warnings:** Authorization failures on individual assignments and all Reservations-scope errors are reported as warnings — they appear in the summary but do not change SUCCESS to FAILURE.
+
+---
 
 ## Output
 
@@ -115,26 +136,33 @@ Normal output is intentionally brief: phase headers, new assignments created, wa
 Summary
 ================================================================================
   Management groups processed: 12
-  Subscriptions processed:     4
+  Subscriptions processed:     42
   Subscriptions skipped:       0
 
-  MG role assignments created:   0
+  MG role assignments created:         0
   MG role assignments (already exist): 36
 
-  Sub role assignments created:   0
-  Sub role assignments (already exist): 12
+  Sub role assignments created:         0
+  Sub role assignments (already exist): 126
+
+  Reservation assignments created:         0
+  Reservation assignments (already exist): 4
 
 ================================================================================
 ✓ SUCCESS: AOBO configuration completed without errors
 ================================================================================
 ```
 
+---
+
 ## Error Handling
 
 - The script uses `try/catch` blocks for all operations that can fail
-- Errors are collected and reported in a summary at the end
-- The script continues processing even if individual role assignments fail
-- If the current user lacks Owner on all subscriptions, the script returns with an error
+- `PrincipalNotFound` on any assignment excludes the group from all further phases — no retries
+- `AuthorizationFailed` on individual assignments is a non-blocking warning, not a failure
+- Unexpected errors are collected and reported in the summary
+
+---
 
 ## Support
 

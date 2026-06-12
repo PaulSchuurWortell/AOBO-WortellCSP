@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     This script configures AOBO role assignments for Wortell CSP Tier 1 & 2 AdminAgents
-    and IngramMicroNL AdminAgents on all subscriptions within a customer tenant.
+    and IngramMicroNL AdminAgents on all subscriptions and management groups within a
+    customer tenant.
 
     Based on: IngramMicroNL AOBO scripts
     Reference: https://github.com/IngramMicroNL/Azure/tree/main/AOBO%20-%20AdminOnBehalfOf
@@ -17,33 +18,42 @@
 
     Prerequisites:
     - Azure Cloud Shell or local environment with Az PowerShell module
-    - Global Administrator rights on the customer tenant
+    - Owner or User Access Administrator at root management group scope
     - Connected to Azure via Connect-AzAccount
-    - Unrestricted Owner access to the Azure subscriptions and/or management groups being configured
+    - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.4 (June 12, 2026)
+    - Simplified from 9 phases to 4: Discover, Assign MGs, Assign subscriptions, Assign Reservations
+    - Removed pre-flight validation phases; assignments now fail gracefully per principal and scope
+    - PrincipalNotFound in any assignment excludes the group from all remaining phases (no retry)
+    - AuthorizationFailed on any assignment is a non-blocking warning, not an error
+    - Replaced -SkipPrincipalCheck with -PrincipalCheck (opt-in pre-validation before Phase 2)
+    - Replaced -SkipOwnerCheck with -OwnerCheck (opt-in Owner access filter before Phase 2)
+    - Removed temporary management group creation/cleanup entirely
+    - Unified $Errors (hard failures) and $Warnings (access-denied, reservations) in summary
+
+    v1.3 (June 11, 2026)
+    - Added -SkipPrincipalCheck switch to bypass Phase 0 foreign principal validation
+
     v1.3 (June 9, 2026)
-    - Phase 0: Non-aborting group availability check — all foreign principals are tested; validated ones collected in $ValidatedGroups; script only aborts if zero principals pass
-    - Phase 5/6: Role assignments now iterate $ValidatedGroups instead of $Groups — excluded principals are skipped
-    - Phase 7: Iterates $ValidatedReservationGroups; failures collected in $ReservationWarnings instead of $Errors — does not affect SUCCESS/FAILURE status
-    - Phase 8: Reservation warnings shown in a separate summary section; SUCCESS reported even when reservation warnings are present
+    - Phase 0: Non-aborting group availability check — all foreign principals are tested;
+      validated ones collected in $ValidatedGroups; script only aborts if zero principals pass
+    - Phase 5/6: Role assignments now iterate $ValidatedGroups instead of $Groups
+    - Phase 7: Iterates $ValidatedReservationGroups; failures collected in $ReservationWarnings
+    - Phase 8: Reservation warnings shown in a separate summary section
 
     v1.2 (May 12, 2026)
-    - Phase 0: CSP relationship check now tests all foreign principals (all unique groups from $Groups and $ReservationGroups), not just the first one
-    - Phase 3: Owner verification now accepts indirect ownership — via group membership or parent management group assignment
-    - Phase 3: Added -SkipOwnerCheck switch to bypass the pre-flight check entirely when inherited permissions are not correctly resolved
+    - Phase 0: CSP relationship check now tests all foreign principals
+    - Phase 3: Owner verification now accepts indirect ownership via group or parent MG
+    - Phase 3: Added -SkipOwnerCheck switch
 
     v1.1 (May 8, 2026)
     - Added Phase 7: Reservations Reader role assignment on Azure Reservations scope
-    - Added $ReservationGroups configuration section for reservation-scope assignments
+    - Added $ReservationGroups configuration section
 
     v1.0 (May 6, 2026)
     - Initial release
-    - Implemented six-phase AOBO configuration script
-    - Support for three security groups with role assignments
-    - Owner permission verification with skip logic for inaccessible subscriptions
-    - Comprehensive error handling and progress logging
-    - Management group access validation via temporary group creation
 
 .EXAMPLE
     .\AOBO-WortellCSP.ps1
@@ -57,24 +67,25 @@ param(
     [Parameter(Mandatory = $false)]
     [switch]$DryRun,
 
-    # Skip the Phase 3 Owner pre-flight check and treat all subscriptions as accessible.
-    # Use when the running account has Owner via a parent management group and the check
-    # incorrectly marks subscriptions as inaccessible.
+    # Opt-in: validate that each foreign principal can receive a test assignment before Phase 2.
+    # Failed principals are excluded from all role assignments.
+    # Use when GDAP registration is uncertain and you want an early warning.
+    # Omit if GDAP is confirmed but the test-assignment itself fails due to API limitations.
     [Parameter(Mandatory = $false)]
-    [switch]$SkipOwnerCheck,
+    [switch]$PrincipalCheck,
 
-    # Skip the Phase 0 foreign principal validation test and treat all configured groups as valid.
-    # Use when GDAP is confirmed established for all principals but the test-assignment fails
-    # (e.g. insufficient write access on the test subscription, or a known API quirk).
+    # Opt-in: verify the running account has Owner on each subscription before Phase 3.
+    # Subscriptions without confirmed Owner access are skipped.
+    # Omit to attempt all subscriptions and let access-denied results appear as warnings.
     [Parameter(Mandatory = $false)]
-    [switch]$SkipPrincipalCheck
+    [switch]$OwnerCheck
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260611001"
+$Version = "20260612001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -116,20 +127,21 @@ $ReservationGroups = @(
 # Initialize tracking variables
 # =============================================================================
 
-$Errors                        = @()
-$ReservationWarnings           = @()
-$SkippedSubscriptions          = @()
-$ProcessedSubscriptions        = @()
-$ProcessedManagementGroups     = @()
-$RoleAssignmentsCreated        = 0
-$RoleAssignmentsExists         = 0
-$MgRoleAssignmentsCreated      = 0
-$MgRoleAssignmentsExists       = 0
+$Errors                            = @()
+$Warnings                          = @()
+$SkippedPrincipalIds               = @()
+$SkippedSubscriptions              = @()
+$ProcessedSubscriptions            = @()
+$ProcessedManagementGroups         = @()
+$RoleAssignmentsCreated            = 0
+$RoleAssignmentsExists             = 0
+$MgRoleAssignmentsCreated          = 0
+$MgRoleAssignmentsExists           = 0
 $ReservationRoleAssignmentsCreated = 0
 $ReservationRoleAssignmentsExists  = 0
 
 # =============================================================================
-# Phase 0: Verify active CSP reseller relationship
+# Banner
 # =============================================================================
 
 Write-Output ""
@@ -140,34 +152,51 @@ if ($DryRun) {
 }
 Write-Output "================================================================================"
 Write-Output ""
-Write-Output "[Phase 0] Verifying active CSP reseller relationship..."
 
-# Collect all unique foreign principals used across all phases
-$AllForeignGroups = ($Groups + $ReservationGroups) | Sort-Object -Property ObjectId -Unique
+# =============================================================================
+# Phase 1: Discover subscriptions, identity, and optional pre-checks
+# =============================================================================
 
-if ($SkipPrincipalCheck) {
-    Write-Output "  Skipping foreign principal validation (-SkipPrincipalCheck). All $($AllForeignGroups.Count) configured groups accepted."
-    $ValidatedGroups            = $Groups
-    $ValidatedReservationGroups = $ReservationGroups
-} else {
-    # Get first available subscription for testing
-    try {
-        $TestSubscription = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" } | Select-Object -First 1
-        if (-not $TestSubscription) {
-            Write-Error "No enabled subscriptions found to perform reseller relationship check"
-            return
-        }
-    } catch {
-        Write-Error "Failed to retrieve subscriptions for reseller relationship check: $_"
-        return
-    }
+Write-Output "[Phase 1] Discovering environment..."
 
-    $TestRole  = "Reader"
-    $TestScope = "/subscriptions/$($TestSubscription.Id)"
+try {
+    $Subscriptions = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" }
+    Write-Output "  ✓ $($Subscriptions.Count) enabled subscription(s)"
+} catch {
+    Write-Error "Failed to retrieve subscriptions: $_"
+    return
+}
 
-    Write-Output "  Testing Foreign Principal assignments on subscription: $($TestSubscription.Name)"
+try {
+    $CurrentUser = Get-AzADUser -SignedIn -ErrorAction Stop
+    Write-Output "  ✓ Current user: $($CurrentUser.DisplayName) ($($CurrentUser.UserPrincipalName))"
+} catch {
+    Write-Error "Failed to retrieve current user: $_"
+    return
+}
 
+if ($Subscriptions.Count -eq 0) {
+    Write-Error "No enabled subscriptions found in this tenant"
+    return
+}
+
+# Active groups default to the full configured lists; -PrincipalCheck may filter them
+$ActiveGroups            = $Groups
+$ActiveReservationGroups = $ReservationGroups
+
+# --- Optional: Validate foreign principals (-PrincipalCheck) ---
+
+if ($PrincipalCheck) {
+    Write-Output ""
+    Write-Output "  [PrincipalCheck] Validating foreign principals..."
+
+    $TestSubscription   = $Subscriptions | Select-Object -First 1
+    $TestRole           = "Reader"
+    $TestScope          = "/subscriptions/$($TestSubscription.Id)"
+    $AllForeignGroups   = ($Groups + $ReservationGroups) | Sort-Object -Property ObjectId -Unique
     $ValidatedObjectIds = @()
+
+    Write-Output "  Testing on subscription: $($TestSubscription.Name)"
 
     foreach ($Group in $AllForeignGroups) {
         try {
@@ -180,245 +209,190 @@ if ($SkipPrincipalCheck) {
 
             Write-Verbose "  ✓ $($Group.Name)"
             $ValidatedObjectIds += $Group.ObjectId
-
             Remove-AzRoleAssignment -ObjectId $Group.ObjectId -RoleDefinitionName $TestRole -Scope $TestScope -ErrorAction SilentlyContinue | Out-Null
 
         } catch {
             Write-Verbose "  Exception for '$($Group.Name)': $($_.Exception)"
 
             if ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-                Write-Verbose "  ✓ $($Group.Name) — Foreign Principal verified (assignment already exists)"
+                Write-Verbose "  ✓ $($Group.Name) — assignment already exists"
                 $ValidatedObjectIds += $Group.ObjectId
             } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-                Write-Warning "  ✗ $($Group.Name) — Authorization failed: running account lacks role-assignment write access on '$($TestSubscription.Name)'. This group will be excluded."
+                Write-Warning "  ✗ $($Group.Name) — authorization failed on '$($TestSubscription.Name)'. Group excluded."
             } else {
-                Write-Warning "  ✗ $($Group.Name) [$($Group.ObjectId)] — $($_.Exception.Message). This group will be excluded."
+                Write-Warning "  ✗ $($Group.Name) [$($Group.ObjectId)] — $($_.Exception.Message). Group excluded."
             }
         }
     }
 
     if ($ValidatedObjectIds.Count -eq 0) {
-        Write-Output ""
-        Write-Error "No foreign principals could be validated. Ensure an active CSP reseller relationship exists and the running account has role-assignment write access on subscription '$($TestSubscription.Name)'."
-        Write-Output ""
-        Write-Error "Required action: The customer Global Administrator must accept the reseller relationship invitation from the CSP partner before this script can be executed."
-        Write-Output ""
-        Write-Error "Exiting script."
+        Write-Error "No foreign principals could be validated. Ensure an active GDAP relationship exists."
         return
     }
 
-    # Derive validated group lists from source arrays to preserve correct role definitions
-    $ValidatedGroups            = $Groups            | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
-    $ValidatedReservationGroups = $ReservationGroups | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
-
     if ($ValidatedObjectIds.Count -lt $AllForeignGroups.Count) {
-        $ExcludedCount = $AllForeignGroups.Count - $ValidatedObjectIds.Count
-        Write-Warning "  $ExcludedCount of $($AllForeignGroups.Count) foreign principal(s) could not be validated and will be excluded from all role assignments."
+        Write-Warning "  $($AllForeignGroups.Count - $ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principal(s) excluded."
     }
 
-    Write-Output "  ✓ CSP reseller relationship verified — $($ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principals confirmed"
+    Write-Output "  ✓ $($ValidatedObjectIds.Count) of $($AllForeignGroups.Count) foreign principals confirmed"
+
+    $ActiveGroups            = $Groups            | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
+    $ActiveReservationGroups = $ReservationGroups | Where-Object { $_.ObjectId -in $ValidatedObjectIds }
 }
 
-# =============================================================================
-# Phase 1: Retrieve subscriptions and current user
-# =============================================================================
+# --- Optional: Verify Owner access per subscription (-OwnerCheck) ---
 
-Write-Output ""
-Write-Output "[Phase 1] Retrieving subscriptions and current user..."
-
-try {
-    $Subscriptions = Get-AzSubscription -ErrorAction Stop | Where-Object { $_.State -eq "Enabled" }
-    Write-Output "  ✓ Retrieved $($Subscriptions.Count) enabled subscription(s)"
-} catch {
-    Write-Error "Failed to retrieve subscriptions: $_"
-    return
-}
-
-try {
-    $CurrentUser = Get-AzADUser -SignedIn -ErrorAction Stop
-    Write-Output "  ✓ Current user: $($CurrentUser.DisplayName) ($($CurrentUser.Id))"
-} catch {
-    Write-Error "Failed to retrieve current user: $_"
-    return
-}
-
-if ($Subscriptions.Count -eq 0) {
-    Write-Error "No enabled subscriptions found in this tenant"
-    return
-}
-
-# =============================================================================
-# Phase 2: Foreign principal validation (informational)
-# =============================================================================
-
-Write-Output ""
-Write-Output "[Phase 2] Checking existing foreign principal role assignments..."
-Write-Output ""
-
-# Phase 0 already validated that foreign groups work, so this phase is informational only
-# It shows what role assignments already exist for the configured groups
-
-foreach ($Group in $Groups) {
-    try {
-        $ExistingAssignments = Get-AzRoleAssignment -ObjectId $Group.ObjectId -ErrorAction SilentlyContinue
-
-        if ($ExistingAssignments) {
-            Write-Verbose "  → $($Group.Name): $($ExistingAssignments.Count) existing role assignment(s) found"
-        } else {
-            Write-Verbose "  → $($Group.Name): No existing role assignments found"
-        }
-    } catch {
-        Write-Verbose "  → $($Group.Name): Unable to check existing assignments (this is normal for new setups)"
-    }
-}
-
-Write-Verbose "  Note: Phase 0 already validated CSP relationship and foreign group resolution"
-
-if ($InvalidGroups.Count -gt 0) {
+if ($OwnerCheck) {
     Write-Output ""
-    Write-Error "The following groups do not exist in this tenant. Please ensure they are invited as guests or contact your administrator:"
-    foreach ($Group in $InvalidGroups) {
-        Write-Error "  - $($Group.Name) [$($Group.ObjectId)]"
-    }
-    Write-Error "Cannot proceed with role assignments."
-    return
-}
+    Write-Output "  [OwnerCheck] Verifying Owner access on subscriptions..."
 
-# =============================================================================
-# Phase 3: Verify Owner permissions on subscriptions
-# =============================================================================
-
-Write-Output ""
-Write-Output "[Phase 3] Verifying Owner permissions on subscriptions..."
-Write-Output ""
-
-if ($SkipOwnerCheck) {
-    Write-Output "  Owner check skipped (-SkipOwnerCheck). Including all $($Subscriptions.Count) subscription(s)."
-    $ProcessedSubscriptions = @($Subscriptions)
-} else {
-    # Fallback: check whether the user has Owner on any management group.
-    # -SignInName uses the Azure assignedTo() filter which resolves group memberships.
-    # We check MG scopes explicitly because Get-AzRoleAssignment without -Scope only queries
-    # the current subscription context and never returns MG-level assignments.
     $HasMgOwner = $false
     try {
         $AllMGs = Get-AzManagementGroup -ErrorAction Stop
         foreach ($MG in $AllMGs) {
-            $mgScope = "/providers/Microsoft.Management/managementGroups/$($MG.Name)"
-            $mgCheck = Get-AzRoleAssignment `
+            $MgScope = "/providers/Microsoft.Management/managementGroups/$($MG.Name)"
+            $MgCheck = Get-AzRoleAssignment `
                 -SignInName $CurrentUser.UserPrincipalName `
                 -RoleDefinitionName "Owner" `
-                -Scope $mgScope `
+                -Scope $MgScope `
                 -ErrorAction SilentlyContinue
-            if ($mgCheck) {
+            if ($MgCheck) {
                 $HasMgOwner = $true
-                Write-Output "  ✓ Owner found at management group: $($MG.DisplayName) — accepting all subscriptions"
+                Write-Output "  ✓ Owner at management group: $($MG.DisplayName) — all subscriptions accepted"
                 break
             }
         }
     } catch {
-        Write-Warning "Unable to query management group role assignments: $_"
+        Write-Warning "  Unable to query management group role assignments: $_"
     }
 
     foreach ($Subscription in $Subscriptions) {
-        $SubScope = "/subscriptions/$($Subscription.Id)"
-
-        # -SignInName triggers the assignedTo() API filter which resolves group memberships.
-        # Per Azure RBAC API contract this also returns assignments inherited from parent scopes,
-        # but in practice MG inheritance is not always surfaced — hence the $HasMgOwner fallback above.
-        $OwnerCheck = Get-AzRoleAssignment `
+        $SubScope    = "/subscriptions/$($Subscription.Id)"
+        $OwnerAssign = Get-AzRoleAssignment `
             -SignInName $CurrentUser.UserPrincipalName `
             -RoleDefinitionName "Owner" `
             -Scope $SubScope `
             -ErrorAction SilentlyContinue
 
-        if ($OwnerCheck -or $HasMgOwner) {
-            Write-Verbose "  ✓ $($Subscription.Name) [$($Subscription.Id)]"
+        if ($OwnerAssign -or $HasMgOwner) {
+            Write-Verbose "  ✓ $($Subscription.Name)"
             $ProcessedSubscriptions += $Subscription
         } else {
-            Write-Warning "Current user lacks Owner on subscription $($Subscription.Name) — skipping"
+            Write-Warning "  Owner not confirmed on $($Subscription.Name) — skipping"
             $SkippedSubscriptions += $Subscription
         }
     }
-}
 
-# Verify we have at least one subscription to process
-if ($ProcessedSubscriptions.Count -eq 0) {
-    Write-Output ""
-    Write-Error "Current user does not have Owner role on any subscription. Cannot proceed."
-    return
-}
-
-Write-Output ""
-Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count)"
-Write-Output "  Subscriptions skipped:    $($SkippedSubscriptions.Count)"
-
-# Wait before proceeding to management group test
-Start-Sleep -Seconds 5
-
-# =============================================================================
-# Phase 4: Access validation via temporary management group
-# =============================================================================
-
-Write-Output ""
-Write-Output "[Phase 4] Validating access rights via temporary management group..."
-
-$TempMgName = "Placeholder_To_Be_Removed"
-
-if ($DryRun) {
-    Write-Output "  [DRY RUN] Would create temporary management group: $TempMgName"
-    Write-Output "  [DRY RUN] Would validate access rights"
-} else {
-    try {
-        New-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
-        Write-Output "  ✓ Temporary management group created: $TempMgName"
-        Start-Sleep -Seconds 2
-    } catch {
-        Write-Error "Failed to create temporary management group: $_"
-        Write-Error "Access validation failed. Cannot proceed with role assignments."
+    if ($ProcessedSubscriptions.Count -eq 0) {
+        Write-Error "No accessible subscriptions found. Cannot proceed."
         return
     }
+
+    Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count) (skipped: $($SkippedSubscriptions.Count))"
+} else {
+    $ProcessedSubscriptions = @($Subscriptions)
 }
 
 # =============================================================================
-# Phase 5: Role assignments on management groups
+# Phase 2: Assign roles on management groups
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 5] Assigning roles on management groups..."
+Write-Output "[Phase 2] Assigning roles on management groups..."
 Write-Output ""
 
 try {
     $ManagementGroups = Get-AzManagementGroup -ErrorAction Stop
-    Write-Output "  Retrieved $($ManagementGroups.Count) management group(s)"
+    Write-Output "  $($ManagementGroups.Count) management group(s) found"
 } catch {
     Write-Error "Failed to retrieve management groups: $_"
     $Errors += "Failed to retrieve management groups: $_"
-    $ManagementGroups = @()  # Set to empty array so we don't process any
+    $ManagementGroups = @()
 }
 
 foreach ($ManagementGroup in $ManagementGroups) {
     $ProcessedManagementGroups += $ManagementGroup
+    $MgScope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
 
-    foreach ($Group in $ValidatedGroups) {
+    foreach ($Group in $ActiveGroups) {
+        if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
+
         foreach ($Role in $Group.Roles) {
-            $Scope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
-
             try {
-                # Check if role assignment already exists
                 $RBACCheck = Get-AzRoleAssignment `
                     -ObjectId $Group.ObjectId `
                     -RoleDefinitionName $Role `
-                    -Scope $Scope `
+                    -Scope $MgScope `
                     -ErrorAction SilentlyContinue
 
                 if ($RBACCheck) {
-                    Write-Verbose "  → Role assignment already exists: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
+                    Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
                     $MgRoleAssignmentsExists++
+                } elseif ($DryRun) {
+                    Write-Output "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    $MgRoleAssignmentsCreated++
                 } else {
-                    if ($DryRun) {
-                        Write-Output "  [DRY RUN] Would create role assignment: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                        $MgRoleAssignmentsCreated++
+                    New-AzRoleAssignment `
+                        -ObjectId $Group.ObjectId `
+                        -RoleDefinitionName $Role `
+                        -Scope $MgScope `
+                        -ObjectType "ForeignGroup" `
+                        -ErrorAction Stop | Out-Null
+
+                    Write-Output "  ✓ Assigned: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    $MgRoleAssignmentsCreated++
+                }
+            } catch {
+                Write-Verbose "  Exception for '$($Group.Name)' on '$($ManagementGroup.DisplayName)': $($_.Exception)"
+
+                if ($_.Exception.Message -like "*PrincipalNotFound*") {
+                    Write-Warning "  Principal not found: $($Group.Name) — excluded from all remaining assignments"
+                    $SkippedPrincipalIds += $Group.ObjectId
+                    break
+                } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
+                    Write-Warning "  Access denied: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    $Warnings += "Access denied: $Role for $($Group.Name) on MG $($ManagementGroup.DisplayName)"
+                } else {
+                    Write-Warning "  Error: $Role for $($Group.Name) on $($ManagementGroup.DisplayName): $_"
+                    $Errors += "Error assigning $Role to $($Group.Name) on MG $($ManagementGroup.DisplayName): $_"
+                }
+            }
+        }
+    }
+}
+
+# =============================================================================
+# Phase 3: Assign roles on subscriptions
+# =============================================================================
+
+Write-Output ""
+Write-Output "[Phase 3] Assigning roles on subscriptions..."
+Write-Output ""
+
+foreach ($Subscription in $ProcessedSubscriptions) {
+    try {
+        Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
+        Write-Verbose "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
+
+        foreach ($Group in $ActiveGroups) {
+            if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
+
+            foreach ($Role in $Group.Roles) {
+                $Scope = "/subscriptions/$($Subscription.Id)"
+
+                try {
+                    $RBACCheck = Get-AzRoleAssignment `
+                        -ObjectId $Group.ObjectId `
+                        -RoleDefinitionName $Role `
+                        -Scope $Scope `
+                        -ErrorAction SilentlyContinue
+
+                    if ($RBACCheck) {
+                        Write-Verbose "    → Already exists: $Role for $($Group.Name)"
+                        $RoleAssignmentsExists++
+                    } elseif ($DryRun) {
+                        Write-Output "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Subscription.Name)"
+                        $RoleAssignmentsCreated++
                     } else {
                         New-AzRoleAssignment `
                             -ObjectId $Group.ObjectId `
@@ -427,66 +401,23 @@ foreach ($ManagementGroup in $ManagementGroups) {
                             -ObjectType "ForeignGroup" `
                             -ErrorAction Stop | Out-Null
 
-                        Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on MG $($ManagementGroup.Name)"
-                        $MgRoleAssignmentsCreated++
-                    }
-                }
-            } catch {
-                Write-Warning "Error assigning $Role to $($Group.Name) on $($ManagementGroup.Name): $_"
-                $Errors += "Error assigning $Role to $($Group.Name) on MG $($ManagementGroup.Name): $_"
-            }
-        }
-    }
-}
-
-# =============================================================================
-# Phase 6: Role assignments on subscriptions
-# =============================================================================
-
-Write-Output ""
-Write-Output "[Phase 6] Assigning roles on subscriptions..."
-Write-Output ""
-
-foreach ($Subscription in $ProcessedSubscriptions) {
-    try {
-        Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
-        Write-Verbose ""
-        Write-Verbose "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
-
-        foreach ($Group in $ValidatedGroups) {
-            foreach ($Role in $Group.Roles) {
-                $Scope = "/subscriptions/$($Subscription.Id)"
-
-                try {
-                    # Check if role assignment already exists
-                    $RBACCheck = Get-AzRoleAssignment `
-                        -ObjectId $Group.ObjectId `
-                        -RoleDefinitionName $Role `
-                        -Scope $Scope `
-                        -ErrorAction SilentlyContinue
-
-                    if ($RBACCheck) {
-                        Write-Verbose "    → Role assignment already exists: $Role for $($Group.Name)"
-                        $RoleAssignmentsExists++
-                    } else {
-                        if ($DryRun) {
-                            Write-Output "    [DRY RUN] Would create role assignment: $Role for $($Group.Name)"
-                            $RoleAssignmentsCreated++
-                        } else {
-                            New-AzRoleAssignment `
-                                -ObjectId $Group.ObjectId `
-                                -RoleDefinitionName $Role `
-                                -Scope $Scope `
-                                -ObjectType "ForeignGroup" `
-                                -ErrorAction Stop | Out-Null
-
-                            Write-Output "    ✓ Role assignment created: $Role for $($Group.Name)"
-                            $RoleAssignmentsCreated++
-                        }
+                        Write-Output "    ✓ Assigned: $Role for $($Group.Name) on $($Subscription.Name)"
+                        $RoleAssignmentsCreated++
                     }
                 } catch {
-                    Write-Warning "    Error assigning $Role to $($Group.Name): $_"
-                    $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Subscription.Name): $_"
+                    Write-Verbose "    Exception for '$($Group.Name)' on '$($Subscription.Name)': $($_.Exception)"
+
+                    if ($_.Exception.Message -like "*PrincipalNotFound*") {
+                        Write-Warning "    Principal not found: $($Group.Name) — excluded from all remaining assignments"
+                        $SkippedPrincipalIds += $Group.ObjectId
+                        break
+                    } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
+                        Write-Warning "    Access denied: $Role for $($Group.Name) on $($Subscription.Name)"
+                        $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Subscription.Name)"
+                    } else {
+                        Write-Warning "    Error: $Role for $($Group.Name) on $($Subscription.Name): $_"
+                        $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Subscription.Name): $_"
+                    }
                 }
             }
         }
@@ -497,16 +428,18 @@ foreach ($Subscription in $ProcessedSubscriptions) {
 }
 
 # =============================================================================
-# Phase 7: Role assignments on Azure Reservations scope
+# Phase 4: Assign roles on Azure Reservations scope
 # =============================================================================
 
 Write-Output ""
-Write-Output "[Phase 7] Assigning roles on Azure Reservations scope..."
+Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
 Write-Output ""
 
 $ReservationScope = "/providers/Microsoft.Capacity"
 
-foreach ($Group in $ValidatedReservationGroups) {
+foreach ($Group in $ActiveReservationGroups) {
+    if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
+
     foreach ($Role in $Group.Roles) {
         try {
             $RBACCheck = Get-AzRoleAssignment `
@@ -516,54 +449,32 @@ foreach ($Group in $ValidatedReservationGroups) {
                 -ErrorAction SilentlyContinue
 
             if ($RBACCheck) {
-                Write-Verbose "  → Role assignment already exists: $Role for $($Group.Name) on Reservations scope"
+                Write-Verbose "  → Already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
+            } elseif ($DryRun) {
+                Write-Output "  [DRY RUN] Would assign: $Role for $($Group.Name) on Reservations scope"
+                $ReservationRoleAssignmentsCreated++
             } else {
-                if ($DryRun) {
-                    Write-Output "  [DRY RUN] Would create role assignment: $Role for $($Group.Name) on Reservations scope"
-                    $ReservationRoleAssignmentsCreated++
-                } else {
-                    New-AzRoleAssignment `
-                        -ObjectId $Group.ObjectId `
-                        -RoleDefinitionName $Role `
-                        -Scope $ReservationScope `
-                        -ObjectType "ForeignGroup" `
-                        -ErrorAction Stop | Out-Null
+                New-AzRoleAssignment `
+                    -ObjectId $Group.ObjectId `
+                    -RoleDefinitionName $Role `
+                    -Scope $ReservationScope `
+                    -ObjectType "ForeignGroup" `
+                    -ErrorAction Stop | Out-Null
 
-                    Write-Output "  ✓ Role assignment created: $Role for $($Group.Name) on Reservations scope"
-                    $ReservationRoleAssignmentsCreated++
-                }
+                Write-Output "  ✓ Assigned: $Role for $($Group.Name) on Reservations scope"
+                $ReservationRoleAssignmentsCreated++
             }
         } catch {
-            Write-Warning "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
-            $ReservationWarnings += "Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+            Write-Verbose "  Exception for '$($Group.Name)' on Reservations scope: $($_.Exception)"
+            Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+            $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
         }
     }
 }
 
 # =============================================================================
-# Phase 8: Cleanup and summary
-# =============================================================================
-
-Write-Output ""
-Write-Output "[Phase 8] Cleanup and summary..."
-Write-Output ""
-
-try {
-    if ($DryRun) {
-        Write-Output "  [DRY RUN] Would remove temporary management group"
-    } else {
-        Remove-AzManagementGroup -GroupId $TempMgName -ErrorAction Stop | Out-Null
-        Write-Output "  ✓ Temporary management group removed"
-        Start-Sleep -Seconds 2
-    }
-} catch {
-    Write-Warning "Failed to remove temporary management group: $_"
-    $Errors += "Failed to remove temporary management group: $_"
-}
-
-# =============================================================================
-# Display summary
+# Summary
 # =============================================================================
 
 Write-Output ""
@@ -575,72 +486,81 @@ Write-Output "  Subscriptions processed:     $($ProcessedSubscriptions.Count)"
 Write-Output "  Subscriptions skipped:       $($SkippedSubscriptions.Count)"
 Write-Output ""
 
-# Management Group Role Assignments
 if ($DryRun) {
-    Write-Output "  MG role assignments to create:  $MgRoleAssignmentsCreated"
+    Write-Output "  MG role assignments to create:       $MgRoleAssignmentsCreated"
 } else {
-    Write-Output "  MG role assignments created:   $MgRoleAssignmentsCreated"
+    Write-Output "  MG role assignments created:         $MgRoleAssignmentsCreated"
 }
 Write-Output "  MG role assignments (already exist): $MgRoleAssignmentsExists"
 Write-Output ""
 
-# Subscription Role Assignments
 if ($DryRun) {
-    Write-Output "  Sub role assignments to create:  $RoleAssignmentsCreated"
+    Write-Output "  Sub role assignments to create:       $RoleAssignmentsCreated"
 } else {
-    Write-Output "  Sub role assignments created:   $RoleAssignmentsCreated"
+    Write-Output "  Sub role assignments created:         $RoleAssignmentsCreated"
 }
 Write-Output "  Sub role assignments (already exist): $RoleAssignmentsExists"
 Write-Output ""
 
-# Reservation Scope Role Assignments
 if ($DryRun) {
-    Write-Output "  Reservation role assignments to create:  $ReservationRoleAssignmentsCreated"
+    Write-Output "  Reservation assignments to create:       $ReservationRoleAssignmentsCreated"
 } else {
-    Write-Output "  Reservation role assignments created:   $ReservationRoleAssignmentsCreated"
+    Write-Output "  Reservation assignments created:         $ReservationRoleAssignmentsCreated"
 }
-Write-Output "  Reservation role assignments (already exist): $ReservationRoleAssignmentsExists"
+Write-Output "  Reservation assignments (already exist): $ReservationRoleAssignmentsExists"
+
+if ($SkippedPrincipalIds.Count -gt 0) {
+    Write-Output ""
+    Write-Output "  Principals skipped (not found in tenant):"
+    $SkippedGroups = ($Groups + $ReservationGroups) | Where-Object { $_.ObjectId -in $SkippedPrincipalIds } | Group-Object Name | ForEach-Object { $_.Group[0] }
+    foreach ($G in $SkippedGroups) {
+        Write-Output "    - $($G.Name)"
+    }
+}
 
 if ($SkippedSubscriptions.Count -gt 0) {
     Write-Output ""
-    Write-Output "  Skipped subscriptions:"
+    Write-Output "  Skipped subscriptions (-OwnerCheck):"
     foreach ($Sub in $SkippedSubscriptions) {
         Write-Output "    - $($Sub.Name) [$($Sub.Id)]"
     }
 }
 
-if ($Errors.Count -gt 0) {
+if ($Warnings.Count -gt 0) {
     Write-Output ""
-    Write-Output "  Errors encountered:"
-    foreach ($ErrorMessage in $Errors) {
-        Write-Output "    - $ErrorMessage"
+    Write-Output "  Warnings:"
+    foreach ($W in $Warnings) {
+        Write-Output "    - $W"
     }
 }
 
-if ($ReservationWarnings.Count -gt 0) {
+if ($Errors.Count -gt 0) {
     Write-Output ""
-    Write-Output "  Reservation scope warnings (non-blocking):"
-    foreach ($WarningMessage in $ReservationWarnings) {
-        Write-Output "    - $WarningMessage"
+    Write-Output "  Errors:"
+    foreach ($E in $Errors) {
+        Write-Output "    - $E"
     }
 }
 
 Write-Output ""
 
+$SuccessNote = @()
+if ($SkippedPrincipalIds.Count -gt 0) { $SuccessNote += "$($SkippedPrincipalIds.Count) principal(s) not found" }
+if ($Warnings.Count -gt 0)            { $SuccessNote += "$($Warnings.Count) warning(s)" }
+$SuccessSuffix = if ($SuccessNote.Count -gt 0) { " — $($SuccessNote -join ', '), see above" } else { " without errors" }
+
 if ($Errors.Count -eq 0) {
     Write-Output "================================================================================"
     if ($DryRun) {
         Write-Output "✓ DRY RUN SUCCESS: All prerequisites validated, ready for actual deployment"
-    } elseif ($ReservationWarnings.Count -gt 0) {
-        Write-Output "✓ SUCCESS: AOBO configuration completed — $($ReservationWarnings.Count) reservation warning(s), see above"
     } else {
-        Write-Output "✓ SUCCESS: AOBO configuration completed without errors"
+        Write-Output "✓ SUCCESS: AOBO configuration completed$SuccessSuffix"
     }
     Write-Output "================================================================================"
 } else {
     Write-Output "================================================================================"
     if ($DryRun) {
-        Write-Output "⚠ DRY RUN COMPLETED with $($Errors.Count) issue(s) — see details above"
+        Write-Output "⚠ DRY RUN COMPLETED with $($Errors.Count) error(s) — see details above"
     } else {
         Write-Output "⚠ COMPLETED with $($Errors.Count) error(s) — see details above"
     }
