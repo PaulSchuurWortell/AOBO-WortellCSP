@@ -21,13 +21,12 @@ The recommended and easiest way to run this script is directly from **Azure Clou
 ### Step 1 — Open the customer tenant in the Azure portal
 
 1. Go to [portal.azure.com](https://portal.azure.com)
-2. In the top-right corner, click your account name and select **Switch directory**
-3. Choose the **customer tenant** you want to configure
+2. If you have access to multiple directories, click your account name in the top-right corner, select **Switch directory**, and choose the **customer tenant** you want to configure
 
 ### Step 2 — Open Cloud Shell in PowerShell mode
 
 1. Click the **Cloud Shell** button ( `>_` ) in the top navigation bar
-2. If this is your first time, Azure will ask you to create a storage account — click **Create storage** and wait
+2. If prompted, select an arbitrary subscription to associate with Cloud Shell and confirm
 3. If the shell opens in **Bash** mode, switch to **PowerShell** using the dropdown in the Cloud Shell toolbar (top-left of the shell panel)
 4. Wait for the PowerShell prompt to appear
 
