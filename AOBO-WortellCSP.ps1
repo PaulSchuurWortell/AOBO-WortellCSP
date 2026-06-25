@@ -23,6 +23,12 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.5 (June 25, 2026)
+    - Phase 2/3: idempotency check now filters to exact scope (Where-Object Scope -eq) so inherited
+      MG-level assignments no longer prevent creating direct subscription-level assignments
+    - Phase 2/3: RoleAssignmentExists/already exists caught explicitly and treated as success
+      (increments exists counter) rather than falling through to $Errors
+
     v1.4 (June 12, 2026)
     - Simplified from 9 phases to 4: Discover, Assign MGs, Assign subscriptions, Assign Reservations
     - Removed pre-flight validation phases; assignments now fail gracefully per principal and scope
@@ -85,7 +91,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260612001"
+$Version = "20260625001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -323,7 +329,8 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     -ObjectId $Group.ObjectId `
                     -RoleDefinitionName $Role `
                     -Scope $MgScope `
-                    -ErrorAction SilentlyContinue
+                    -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Scope -eq $MgScope }
 
                 if ($RBACCheck) {
                     Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
@@ -349,6 +356,9 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     Write-Warning "  Principal not found: $($Group.Name) — excluded from all remaining assignments"
                     $SkippedPrincipalIds += $Group.ObjectId
                     break
+                } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
+                    Write-Verbose "  → Already exists (concurrent): $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    $MgRoleAssignmentsExists++
                 } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
                     Write-Warning "  Access denied: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
                     $Warnings += "Access denied: $Role for $($Group.Name) on MG $($ManagementGroup.DisplayName)"
@@ -385,7 +395,8 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         -ObjectId $Group.ObjectId `
                         -RoleDefinitionName $Role `
                         -Scope $Scope `
-                        -ErrorAction SilentlyContinue
+                        -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Scope -eq $Scope }
 
                     if ($RBACCheck) {
                         Write-Verbose "    → Already exists: $Role for $($Group.Name)"
@@ -411,6 +422,9 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         Write-Warning "    Principal not found: $($Group.Name) — excluded from all remaining assignments"
                         $SkippedPrincipalIds += $Group.ObjectId
                         break
+                    } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
+                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Subscription.Name)"
+                        $RoleAssignmentsExists++
                     } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
                         Write-Warning "    Access denied: $Role for $($Group.Name) on $($Subscription.Name)"
                         $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Subscription.Name)"
