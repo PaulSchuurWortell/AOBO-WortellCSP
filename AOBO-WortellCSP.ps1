@@ -91,7 +91,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260625001"
+$Version = "20260625002"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -305,7 +305,6 @@ if ($OwnerCheck) {
 
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
-Write-Output ""
 
 try {
     $ManagementGroups = Get-AzManagementGroup -ErrorAction Stop
@@ -336,7 +335,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
                     $MgRoleAssignmentsExists++
                 } elseif ($DryRun) {
-                    Write-Output "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
                     $MgRoleAssignmentsCreated++
                 } else {
                     New-AzRoleAssignment `
@@ -346,7 +345,7 @@ foreach ($ManagementGroup in $ManagementGroups) {
                         -ObjectType "ForeignGroup" `
                         -ErrorAction Stop | Out-Null
 
-                    Write-Output "  ✓ Assigned: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
                     $MgRoleAssignmentsCreated++
                 }
             } catch {
@@ -377,7 +376,6 @@ foreach ($ManagementGroup in $ManagementGroups) {
 
 Write-Output ""
 Write-Output "[Phase 3] Assigning roles on subscriptions..."
-Write-Output ""
 
 foreach ($Subscription in $ProcessedSubscriptions) {
     try {
@@ -402,7 +400,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         Write-Verbose "    → Already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
                     } elseif ($DryRun) {
-                        Write-Output "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Subscription.Name)"
                         $RoleAssignmentsCreated++
                     } else {
                         New-AzRoleAssignment `
@@ -412,7 +410,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                             -ObjectType "ForeignGroup" `
                             -ErrorAction Stop | Out-Null
 
-                        Write-Output "    ✓ Assigned: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Subscription.Name)"
                         $RoleAssignmentsCreated++
                     }
                 } catch {
@@ -447,7 +445,6 @@ foreach ($Subscription in $ProcessedSubscriptions) {
 
 Write-Output ""
 Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
-Write-Output ""
 
 $ReservationScope = "/providers/Microsoft.Capacity"
 
@@ -466,7 +463,7 @@ foreach ($Group in $ActiveReservationGroups) {
                 Write-Verbose "  → Already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
             } elseif ($DryRun) {
-                Write-Output "  [DRY RUN] Would assign: $Role for $($Group.Name) on Reservations scope"
+                Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsCreated++
             } else {
                 New-AzRoleAssignment `
@@ -476,7 +473,7 @@ foreach ($Group in $ActiveReservationGroups) {
                     -ObjectType "ForeignGroup" `
                     -ErrorAction Stop | Out-Null
 
-                Write-Output "  ✓ Assigned: $Role for $($Group.Name) on Reservations scope"
+                Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsCreated++
             }
         } catch {
