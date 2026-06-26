@@ -107,7 +107,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626004"
+$Version = "20260626005"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -210,6 +210,12 @@ if ($Subscriptions.Count -eq 0) {
 # --- Targeting filter: limit to specific subscriptions (-Subscription) ---
 if ($Subscription) {
     $MatchedSubs = @($Subscriptions | Where-Object { $_.Id -in $Subscription -or $_.Name -in $Subscription })
+    foreach ($s in ($Subscription | Where-Object { $_ -notin $Subscriptions.Id })) {
+        $DupCount = @($Subscriptions | Where-Object { $_.Name -eq $s }).Count
+        if ($DupCount -gt 1) {
+            Write-Warning "  '$s' matches $DupCount subscriptions — all will be targeted"
+        }
+    }
     foreach ($s in ($Subscription | Where-Object { $_ -notin $Subscriptions.Id -and $_ -notin $Subscriptions.Name })) {
         Write-Warning "  Subscription not found: '$s'"
     }
@@ -332,6 +338,15 @@ if ($OwnerCheck) {
     Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count) (skipped: $($SkippedSubscriptions.Count))"
 } else {
     $ProcessedSubscriptions = @($Subscriptions)
+}
+
+if (-not $DryRun) {
+    Write-Output ""
+    Write-Output "Starting in 5 seconds — press Ctrl+C to cancel..."
+    for ($i = 5; $i -ge 1; $i--) {
+        Write-Output "  $i..."
+        Start-Sleep -Seconds 1
+    }
 }
 
 # =============================================================================
