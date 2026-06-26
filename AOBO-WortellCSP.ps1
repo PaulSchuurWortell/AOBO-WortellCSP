@@ -107,7 +107,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626002"
+$Version = "20260626003"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -501,6 +501,10 @@ foreach ($Sub in $ProcessedSubscriptions) {
 Write-Output ""
 Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
 
+if ($Subscription -or $ManagementGroup) {
+    Write-Output "  Skipped — targeted mode active"
+} else {
+
 $ReservationScope = "/providers/Microsoft.Capacity"
 
 foreach ($Group in $ActiveReservationGroups) {
@@ -537,6 +541,8 @@ foreach ($Group in $ActiveReservationGroups) {
             $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
         }
     }
+}
+
 }
 
 # =============================================================================
