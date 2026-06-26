@@ -107,7 +107,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626001"
+$Version = "20260626002"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -307,8 +307,8 @@ if ($OwnerCheck) {
         Write-Warning "  Unable to query management group role assignments: $_"
     }
 
-    foreach ($Subscription in $Subscriptions) {
-        $SubScope    = "/subscriptions/$($Subscription.Id)"
+    foreach ($Sub in $Subscriptions) {
+        $SubScope    = "/subscriptions/$($Sub.Id)"
         $OwnerAssign = Get-AzRoleAssignment `
             -SignInName $CurrentUser.UserPrincipalName `
             -RoleDefinitionName "Owner" `
@@ -316,11 +316,11 @@ if ($OwnerCheck) {
             -ErrorAction SilentlyContinue
 
         if ($OwnerAssign -or $HasMgOwner) {
-            Write-Verbose "  ✓ $($Subscription.Name)"
-            $ProcessedSubscriptions += $Subscription
+            Write-Verbose "  ✓ $($Sub.Name)"
+            $ProcessedSubscriptions += $Sub
         } else {
-            Write-Warning "  Owner not confirmed on $($Subscription.Name) — skipping"
-            $SkippedSubscriptions += $Subscription
+            Write-Warning "  Owner not confirmed on $($Sub.Name) — skipping"
+            $SkippedSubscriptions += $Sub
         }
     }
 
@@ -341,6 +341,9 @@ if ($OwnerCheck) {
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
 
+if ($Subscription -and -not $ManagementGroup) {
+    Write-Output "  Skipped — subscription-only targeting active"
+} else {
 try {
     $AllManagementGroups = Get-AzManagementGroup -ErrorAction Stop
     if ($ManagementGroup) {
@@ -414,6 +417,8 @@ foreach ($MG in $ManagementGroups) {
     }
 }
 
+}
+
 # =============================================================================
 # Phase 3: Assign roles on subscriptions
 # =============================================================================
@@ -421,16 +426,20 @@ foreach ($MG in $ManagementGroups) {
 Write-Output ""
 Write-Output "[Phase 3] Assigning roles on subscriptions..."
 
-foreach ($Subscription in $ProcessedSubscriptions) {
+if ($ManagementGroup -and -not $Subscription) {
+    Write-Output "  Skipped — management-group-only targeting active"
+} else {
+
+foreach ($Sub in $ProcessedSubscriptions) {
     try {
-        Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
-        Write-Verbose "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
+        Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
+        Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
 
         foreach ($Group in $ActiveGroups) {
             if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
 
             foreach ($Role in $Group.Roles) {
-                $Scope = "/subscriptions/$($Subscription.Id)"
+                $Scope = "/subscriptions/$($Sub.Id)"
 
                 try {
                     $RBACCheck = Get-AzRoleAssignment `
@@ -444,7 +453,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         Write-Verbose "    → Already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
                     } elseif ($DryRun) {
-                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsCreated++
                     } else {
                         New-AzRoleAssignment `
@@ -454,33 +463,35 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                             -ObjectType "ForeignGroup" `
                             -ErrorAction Stop | Out-Null
 
-                        Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsCreated++
                     }
                 } catch {
-                    Write-Verbose "    Exception for '$($Group.Name)' on '$($Subscription.Name)': $($_.Exception)"
+                    Write-Verbose "    Exception for '$($Group.Name)' on '$($Sub.Name)': $($_.Exception)"
 
                     if ($_.Exception.Message -like "*PrincipalNotFound*") {
                         Write-Warning "    Principal not found: $($Group.Name) — excluded from all remaining assignments"
                         $SkippedPrincipalIds += $Group.ObjectId
                         break
                     } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsExists++
                     } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-                        Write-Warning "    Access denied: $Role for $($Group.Name) on $($Subscription.Name)"
-                        $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Subscription.Name)"
+                        Write-Warning "    Access denied: $Role for $($Group.Name) on $($Sub.Name)"
+                        $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Sub.Name)"
                     } else {
-                        Write-Warning "    Error: $Role for $($Group.Name) on $($Subscription.Name): $_"
-                        $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Subscription.Name): $_"
+                        Write-Warning "    Error: $Role for $($Group.Name) on $($Sub.Name): $_"
+                        $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Sub.Name): $_"
                     }
                 }
             }
         }
     } catch {
-        Write-Error "Failed to switch context to subscription $($Subscription.Name): $_"
-        $Errors += "Failed to switch context to subscription $($Subscription.Name): $_"
+        Write-Error "Failed to switch context to subscription $($Sub.Name): $_"
+        $Errors += "Failed to switch context to subscription $($Sub.Name): $_"
     }
+}
+
 }
 
 # =============================================================================
