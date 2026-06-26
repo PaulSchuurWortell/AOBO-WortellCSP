@@ -107,7 +107,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626003"
+$Version = "20260626004"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -344,22 +344,46 @@ Write-Output "[Phase 2] Assigning roles on management groups..."
 if ($Subscription -and -not $ManagementGroup) {
     Write-Output "  Skipped — subscription-only targeting active"
 } else {
-try {
-    $AllManagementGroups = Get-AzManagementGroup -ErrorAction Stop
-    if ($ManagementGroup) {
-        $ManagementGroups = @($AllManagementGroups | Where-Object { $_.Name -in $ManagementGroup -or $_.DisplayName -in $ManagementGroup })
-        foreach ($nf in ($ManagementGroup | Where-Object { $_ -notin $AllManagementGroups.Name -and $_ -notin $AllManagementGroups.DisplayName })) {
-            Write-Warning "  Management group not found: '$nf'"
-        }
-        Write-Output "  Targeting $($ManagementGroups.Count) of $($AllManagementGroups.Count) management group(s)"
-    } else {
-        $ManagementGroups = $AllManagementGroups
-        Write-Output "  $($ManagementGroups.Count) management group(s) found"
-    }
-} catch {
-    Write-Error "Failed to retrieve management groups: $_"
-    $Errors += "Failed to retrieve management groups: $_"
+if ($ManagementGroup) {
+    # Fetch each specified MG directly by name to avoid requiring list-all permission.
+    # Falls back to list-all only for values not found by name, to support display names.
     $ManagementGroups = @()
+    $NeedDisplayLookup = @()
+    foreach ($MgFilter in $ManagementGroup) {
+        try {
+            $ManagementGroups += Get-AzManagementGroup -GroupName $MgFilter -ErrorAction Stop
+        } catch {
+            $NeedDisplayLookup += $MgFilter
+        }
+    }
+    if ($NeedDisplayLookup) {
+        try {
+            $AllManagementGroups = Get-AzManagementGroup -ErrorAction Stop
+            foreach ($MgFilter in $NeedDisplayLookup) {
+                $Matched = @($AllManagementGroups | Where-Object { $_.DisplayName -eq $MgFilter })
+                if ($Matched.Count -gt 1) {
+                    Write-Warning "  '$MgFilter' matches $($Matched.Count) management groups — all will be targeted"
+                } elseif ($Matched.Count -eq 0) {
+                    Write-Warning "  Management group not found: '$MgFilter'"
+                }
+                $ManagementGroups += $Matched
+            }
+        } catch {
+            foreach ($MgFilter in $NeedDisplayLookup) {
+                Write-Warning "  Management group not found: '$MgFilter'"
+            }
+        }
+    }
+    Write-Output "  Targeting $($ManagementGroups.Count) management group(s)"
+} else {
+    try {
+        $ManagementGroups = @(Get-AzManagementGroup -ErrorAction Stop)
+        Write-Output "  $($ManagementGroups.Count) management group(s) found"
+    } catch {
+        Write-Error "Failed to retrieve management groups: $_"
+        $Errors += "Failed to retrieve management groups: $_"
+        $ManagementGroups = @()
+    }
 }
 
 foreach ($MG in $ManagementGroups) {
