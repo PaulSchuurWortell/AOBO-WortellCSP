@@ -49,6 +49,11 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 - **Owner or User Access Administrator at the root management group scope** on the customer tenant
   - In practice this is obtained by using the **Elevate access** button in Azure AD → Properties, which is only available to **Global Administrators**. Once elevated, the Global Admin has User Access Administrator at root scope.
   - If a customer has already granted you Owner at root management group scope directly, Global Administrator is not required.
+- **Elevated access enabled for Phase 4 (Reservations scope)**
+  - The Reservations scope (`/providers/Microsoft.Capacity`) sits outside the management group hierarchy. Owner at root MG does not cover it.
+  - To assign roles there, go to **Azure Active Directory → Properties**, set **Access management for Azure resources** to **Yes**, and click **Save** before running the script.
+  - You can disable it again after the script completes.
+  - If elevated access is not active, Phase 4 will fail with `AuthorizationFailed` — this is recorded as a warning, not a failure. Use `-OwnerCheck` to detect this before assignments start.
 - **Active GDAP relationship** with both Wortell and Ingram Micro — accepting GDAP automatically registers the following groups as guest service principals in the customer tenant (no manual invitation needed):
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
@@ -89,8 +94,12 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production"
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production", "Staging"
 
-# Combine targeting parameters
+# Assign roles on the Reservations scope only (requires elevated access in Azure AD)
+.\AOBO-WortellCSP.ps1 -ReservationsOnly
+
+# Combine targeting parameters (also adds Phase 4 to a targeted run)
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production" -Subscription "My Subscription"
+.\AOBO-WortellCSP.ps1 -Subscription "My Subscription" -ReservationsOnly
 
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
@@ -130,16 +139,21 @@ Use `-Subscription` and/or `-ManagementGroup` to restrict the script to specific
 
 | Targeting | Phase 2 (MGs) | Phase 3 (Subscriptions) | Phase 4 (Reservations) |
 | --------- | ------------- | ----------------------- | ---------------------- |
-| Neither set (full run) | All MGs | All subscriptions | Assigned |
+| Neither set (full run) | All MGs | All subscriptions | ✓ |
 | `-Subscription` only | Skipped | Filtered subscriptions | Skipped |
 | `-ManagementGroup` only | Filtered MGs | Skipped | Skipped |
-| Both set | Filtered MGs | Filtered subscriptions | Skipped |
+| `-ReservationsOnly` | Skipped | Skipped | ✓ |
+| `-Subscription -ReservationsOnly` | Skipped | Filtered subscriptions | ✓ |
+| `-ManagementGroup -ReservationsOnly` | Filtered MGs | Skipped | ✓ |
+| `-ManagementGroup -Subscription` | Filtered MGs | Filtered subscriptions | Skipped |
+| All three set | Filtered MGs | Filtered subscriptions | ✓ |
 
 **Notes:**
 
 - Values are matched against both technical name and display name (MGs) or name and subscription ID (subscriptions)
 - If a specified value matches multiple resources with the same name, all matches are targeted and a warning is printed
 - If a specified value is not found, a warning is printed and the script continues with whatever was matched
+- Phase 4 requires elevated access in Azure AD — see [Prerequisites](#prerequisites)
 
 **Cancel window:**
 
@@ -153,10 +167,10 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription (`-OwnerCheck`) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
+| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription and Reservations scope (`-OwnerCheck`) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
 | 2 | Assign configured roles to all management groups (or those matching `-ManagementGroup`); skipped entirely when `-Subscription` is set without `-ManagementGroup`; `PrincipalNotFound` excludes the group from all remaining phases; `AuthorizationFailed` is a non-blocking warning | — |
 | 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
-| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode; failures are non-blocking warnings | — |
+| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Azure AD — `AuthorizationFailed` is recorded as a non-blocking warning | — |
 | Summary | Display results — MG and subscription counts, role assignment totals, skipped principals, and any warnings or errors | — |
 
 ---
