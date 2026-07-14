@@ -23,11 +23,16 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
-    v1.6 (June 26, 2026)
+    v1.6 (July 14, 2026)
     - Added -Subscription parameter: limit Phase 3 to one or more specific subscriptions (name or ID)
     - Added -ManagementGroup parameter: limit Phase 2 to one or more specific management groups (name or display name)
     - Banner shows active targeting filters when either parameter is used
     - Unknown subscription/MG names emit a warning and are skipped
+    - Phases 2/3/4 are skipped when not relevant to the active targeting filter
+    - MG lookup now fetches by name directly to avoid requiring list-all permission
+    - Warns when a name matches multiple subscriptions or management groups
+    - 5-second cancel window after Phase 1 (non-DryRun only)
+    - Per-item progress counters in Phase 2 and Phase 3
 
     v1.5 (June 25, 2026)
     - Phase 2/3: idempotency check now filters to exact scope (Where-Object Scope -eq) so inherited
@@ -107,7 +112,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626007"
+$Version = "20260714001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments

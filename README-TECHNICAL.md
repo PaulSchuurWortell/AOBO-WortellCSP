@@ -174,11 +174,21 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 The script version (format `YYYYMMDDnnn`) is printed in the opening banner on every run.
 
-Normal output is intentionally brief: phase headers, new assignments created, warnings, errors, and the final summary. Run with `-Verbose` to also see already-existing assignments, per-subscription progress, and full exception details.
+Normal output shows phase headers, a progress line per management group and subscription, new assignments created, warnings, errors, and the final summary. Run with `-Verbose` to also see already-existing assignments and full exception details.
 
 ## Example Output
 
 ```plaintext
+[Phase 2] Assigning roles on management groups...
+  [1/12] Root Management Group
+  [2/12] Production
+  ...
+
+[Phase 3] Assigning roles on subscriptions...
+  [1/42] My Subscription
+  [2/42] Another Subscription
+  ...
+
 ================================================================================
 Summary
 ================================================================================
