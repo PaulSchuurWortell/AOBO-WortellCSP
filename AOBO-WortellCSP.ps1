@@ -117,7 +117,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260714002"
+$Version = "20260714003"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -347,6 +347,25 @@ if ($OwnerCheck) {
     }
 
     Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count) (skipped: $($SkippedSubscriptions.Count))"
+
+    if ((-not $Subscription -and -not $ManagementGroup) -or $ReservationsOnly) {
+        Write-Output ""
+        Write-Output "  [OwnerCheck] Verifying access on Reservations scope..."
+        try {
+            $ReservationAccess = Get-AzRoleAssignment `
+                -SignInName $CurrentUser.UserPrincipalName `
+                -Scope "/providers/Microsoft.Capacity" `
+                -ErrorAction Stop |
+                Where-Object { $_.RoleDefinitionName -in @("Owner", "User Access Administrator") }
+            if ($ReservationAccess) {
+                Write-Output "  ✓ Access confirmed on Reservations scope"
+            } else {
+                Write-Warning "  No Owner or UAA role found at Reservations scope — Phase 4 will likely fail. Enable 'Elevated access' under Azure AD → Properties first."
+            }
+        } catch {
+            Write-Warning "  Unable to verify Reservations scope access — Phase 4 may fail. Enable 'Elevated access' under Azure AD → Properties first."
+        }
+    }
 } else {
     $ProcessedSubscriptions = @($Subscriptions)
 }
@@ -593,8 +612,13 @@ foreach ($Group in $ActiveReservationGroups) {
             }
         } catch {
             Write-Verbose "  Exception for '$($Group.Name)' on Reservations scope: $($_.Exception)"
-            Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
-            $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
+            if ($_.Exception.Message -like "*AuthorizationFailed*") {
+                Write-Warning "  Access denied: $Role for $($Group.Name) on Reservations scope — ensure 'Elevated access' is enabled under Azure AD → Properties before running"
+                $Warnings += "Reservations: $Role for $($Group.Name) — access denied (elevated access required)"
+            } else {
+                Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+                $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
+            }
         }
     }
 }
