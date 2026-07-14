@@ -23,6 +23,17 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.6 (July 14, 2026)
+    - Added -Subscription parameter: limit Phase 3 to one or more specific subscriptions (name or ID)
+    - Added -ManagementGroup parameter: limit Phase 2 to one or more specific management groups (name or display name)
+    - Banner shows active targeting filters when either parameter is used
+    - Unknown subscription/MG names emit a warning and are skipped
+    - Phases 2/3/4 are skipped when not relevant to the active targeting filter
+    - MG lookup now fetches by name directly to avoid requiring list-all permission
+    - Warns when a name matches multiple subscriptions or management groups
+    - 5-second cancel window after Phase 1 (non-DryRun only)
+    - Per-item progress counters in Phase 2 and Phase 3
+
     v1.5 (June 25, 2026)
     - Phase 2/3: idempotency check now filters to exact scope (Where-Object Scope -eq) so inherited
       MG-level assignments no longer prevent creating direct subscription-level assignments
@@ -84,14 +95,24 @@ param(
     # Subscriptions without confirmed Owner access are skipped.
     # Omit to attempt all subscriptions and let access-denied results appear as warnings.
     [Parameter(Mandatory = $false)]
-    [switch]$OwnerCheck
+    [switch]$OwnerCheck,
+
+    # Limit Phase 3 to one or more specific subscriptions (by name or ID).
+    # Omit to process all enabled subscriptions.
+    [Parameter(Mandatory = $false)]
+    [string[]]$Subscription,
+
+    # Limit Phase 2 to one or more specific management groups (by name or display name).
+    # Omit to process all management groups.
+    [Parameter(Mandatory = $false)]
+    [string[]]$ManagementGroup
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260625002"
+$Version = "20260714001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -156,6 +177,11 @@ Write-Output "AOBO Configuration Script - Wortell CSP  (version $Version)"
 if ($DryRun) {
     Write-Output "DRY RUN MODE - No changes will be made"
 }
+if ($Subscription -or $ManagementGroup) {
+    Write-Output "TARGETED MODE"
+    if ($Subscription)    { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
+    if ($ManagementGroup) { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
+}
 Write-Output "================================================================================"
 Write-Output ""
 
@@ -184,6 +210,26 @@ try {
 if ($Subscriptions.Count -eq 0) {
     Write-Error "No enabled subscriptions found in this tenant"
     return
+}
+
+# --- Targeting filter: limit to specific subscriptions (-Subscription) ---
+if ($Subscription) {
+    $MatchedSubs = @($Subscriptions | Where-Object { $_.Id -in $Subscription -or $_.Name -in $Subscription })
+    foreach ($s in ($Subscription | Where-Object { $_ -notin $Subscriptions.Id })) {
+        $DupCount = @($Subscriptions | Where-Object { $_.Name -eq $s }).Count
+        if ($DupCount -gt 1) {
+            Write-Warning "  '$s' matches $DupCount subscriptions — all will be targeted"
+        }
+    }
+    foreach ($s in ($Subscription | Where-Object { $_ -notin $Subscriptions.Id -and $_ -notin $Subscriptions.Name })) {
+        Write-Warning "  Subscription not found: '$s'"
+    }
+    if ($MatchedSubs.Count -eq 0) {
+        Write-Error "No matching subscriptions found for the specified -Subscription filter."
+        return
+    }
+    Write-Output "  Targeting $($MatchedSubs.Count) of $($Subscriptions.Count) subscription(s)"
+    $Subscriptions = $MatchedSubs
 }
 
 # Active groups default to the full configured lists; -PrincipalCheck may filter them
@@ -272,8 +318,8 @@ if ($OwnerCheck) {
         Write-Warning "  Unable to query management group role assignments: $_"
     }
 
-    foreach ($Subscription in $Subscriptions) {
-        $SubScope    = "/subscriptions/$($Subscription.Id)"
+    foreach ($Sub in $Subscriptions) {
+        $SubScope    = "/subscriptions/$($Sub.Id)"
         $OwnerAssign = Get-AzRoleAssignment `
             -SignInName $CurrentUser.UserPrincipalName `
             -RoleDefinitionName "Owner" `
@@ -281,11 +327,11 @@ if ($OwnerCheck) {
             -ErrorAction SilentlyContinue
 
         if ($OwnerAssign -or $HasMgOwner) {
-            Write-Verbose "  ✓ $($Subscription.Name)"
-            $ProcessedSubscriptions += $Subscription
+            Write-Verbose "  ✓ $($Sub.Name)"
+            $ProcessedSubscriptions += $Sub
         } else {
-            Write-Warning "  Owner not confirmed on $($Subscription.Name) — skipping"
-            $SkippedSubscriptions += $Subscription
+            Write-Warning "  Owner not confirmed on $($Sub.Name) — skipping"
+            $SkippedSubscriptions += $Sub
         }
     }
 
@@ -299,6 +345,15 @@ if ($OwnerCheck) {
     $ProcessedSubscriptions = @($Subscriptions)
 }
 
+if (-not $DryRun) {
+    Write-Output ""
+    Write-Output "Starting in 5 seconds — press Ctrl+C to cancel..."
+    for ($i = 5; $i -ge 1; $i--) {
+        Write-Output "  $i..."
+        Start-Sleep -Seconds 1
+    }
+}
+
 # =============================================================================
 # Phase 2: Assign roles on management groups
 # =============================================================================
@@ -306,18 +361,57 @@ if ($OwnerCheck) {
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
 
-try {
-    $ManagementGroups = Get-AzManagementGroup -ErrorAction Stop
-    Write-Output "  $($ManagementGroups.Count) management group(s) found"
-} catch {
-    Write-Error "Failed to retrieve management groups: $_"
-    $Errors += "Failed to retrieve management groups: $_"
+if ($Subscription -and -not $ManagementGroup) {
+    Write-Output "  Skipped — subscription-only targeting active"
+} else {
+if ($ManagementGroup) {
+    # Fetch each specified MG directly by name to avoid requiring list-all permission.
+    # Falls back to list-all only for values not found by name, to support display names.
     $ManagementGroups = @()
+    $NeedDisplayLookup = @()
+    foreach ($MgFilter in $ManagementGroup) {
+        try {
+            $ManagementGroups += Get-AzManagementGroup -GroupName $MgFilter -ErrorAction Stop
+        } catch {
+            $NeedDisplayLookup += $MgFilter
+        }
+    }
+    if ($NeedDisplayLookup) {
+        try {
+            $AllManagementGroups = Get-AzManagementGroup -ErrorAction Stop
+            foreach ($MgFilter in $NeedDisplayLookup) {
+                $Matched = @($AllManagementGroups | Where-Object { $_.DisplayName -eq $MgFilter })
+                if ($Matched.Count -gt 1) {
+                    Write-Warning "  '$MgFilter' matches $($Matched.Count) management groups — all will be targeted"
+                } elseif ($Matched.Count -eq 0) {
+                    Write-Warning "  Management group not found: '$MgFilter'"
+                }
+                $ManagementGroups += $Matched
+            }
+        } catch {
+            foreach ($MgFilter in $NeedDisplayLookup) {
+                Write-Warning "  Management group not found: '$MgFilter'"
+            }
+        }
+    }
+    Write-Output "  Targeting $($ManagementGroups.Count) management group(s)"
+} else {
+    try {
+        $ManagementGroups = @(Get-AzManagementGroup -ErrorAction Stop)
+        Write-Output "  $($ManagementGroups.Count) management group(s) found"
+    } catch {
+        Write-Error "Failed to retrieve management groups: $_"
+        $Errors += "Failed to retrieve management groups: $_"
+        $ManagementGroups = @()
+    }
 }
 
-foreach ($ManagementGroup in $ManagementGroups) {
-    $ProcessedManagementGroups += $ManagementGroup
-    $MgScope = "/providers/Microsoft.Management/managementgroups/$($ManagementGroup.Name)"
+$MgIndex = 0
+foreach ($MG in $ManagementGroups) {
+    $MgIndex++
+    Write-Output "  [$MgIndex/$($ManagementGroups.Count)] $($MG.DisplayName)"
+    $ProcessedManagementGroups += $MG
+    $MgScope = "/providers/Microsoft.Management/managementgroups/$($MG.Name)"
 
     foreach ($Group in $ActiveGroups) {
         if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
@@ -332,10 +426,10 @@ foreach ($ManagementGroup in $ManagementGroups) {
                     Where-Object { $_.Scope -eq $MgScope }
 
                 if ($RBACCheck) {
-                    Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsExists++
                 } elseif ($DryRun) {
-                    Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsCreated++
                 } else {
                     New-AzRoleAssignment `
@@ -345,29 +439,31 @@ foreach ($ManagementGroup in $ManagementGroups) {
                         -ObjectType "ForeignGroup" `
                         -ErrorAction Stop | Out-Null
 
-                    Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsCreated++
                 }
             } catch {
-                Write-Verbose "  Exception for '$($Group.Name)' on '$($ManagementGroup.DisplayName)': $($_.Exception)"
+                Write-Verbose "  Exception for '$($Group.Name)' on '$($MG.DisplayName)': $($_.Exception)"
 
                 if ($_.Exception.Message -like "*PrincipalNotFound*") {
                     Write-Warning "  Principal not found: $($Group.Name) — excluded from all remaining assignments"
                     $SkippedPrincipalIds += $Group.ObjectId
                     break
                 } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-                    Write-Verbose "  → Already exists (concurrent): $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
+                    Write-Verbose "  → Already exists (concurrent): $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsExists++
                 } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-                    Write-Warning "  Access denied: $Role for $($Group.Name) on $($ManagementGroup.DisplayName)"
-                    $Warnings += "Access denied: $Role for $($Group.Name) on MG $($ManagementGroup.DisplayName)"
+                    Write-Warning "  Access denied: $Role for $($Group.Name) on $($MG.DisplayName)"
+                    $Warnings += "Access denied: $Role for $($Group.Name) on MG $($MG.DisplayName)"
                 } else {
-                    Write-Warning "  Error: $Role for $($Group.Name) on $($ManagementGroup.DisplayName): $_"
-                    $Errors += "Error assigning $Role to $($Group.Name) on MG $($ManagementGroup.DisplayName): $_"
+                    Write-Warning "  Error: $Role for $($Group.Name) on $($MG.DisplayName): $_"
+                    $Errors += "Error assigning $Role to $($Group.Name) on MG $($MG.DisplayName): $_"
                 }
             }
         }
     }
+}
+
 }
 
 # =============================================================================
@@ -377,16 +473,23 @@ foreach ($ManagementGroup in $ManagementGroups) {
 Write-Output ""
 Write-Output "[Phase 3] Assigning roles on subscriptions..."
 
-foreach ($Subscription in $ProcessedSubscriptions) {
+if ($ManagementGroup -and -not $Subscription) {
+    Write-Output "  Skipped — management-group-only targeting active"
+} else {
+
+$SubIndex = 0
+foreach ($Sub in $ProcessedSubscriptions) {
+    $SubIndex++
+    Write-Output "  [$SubIndex/$($ProcessedSubscriptions.Count)] $($Sub.Name)"
     try {
-        Set-AzContext -SubscriptionId $Subscription.Id -ErrorAction Stop | Out-Null
-        Write-Verbose "  Processing subscription: $($Subscription.Name) [$($Subscription.Id)]"
+        Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
+        Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
 
         foreach ($Group in $ActiveGroups) {
             if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
 
             foreach ($Role in $Group.Roles) {
-                $Scope = "/subscriptions/$($Subscription.Id)"
+                $Scope = "/subscriptions/$($Sub.Id)"
 
                 try {
                     $RBACCheck = Get-AzRoleAssignment `
@@ -400,7 +503,7 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                         Write-Verbose "    → Already exists: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
                     } elseif ($DryRun) {
-                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsCreated++
                     } else {
                         New-AzRoleAssignment `
@@ -410,33 +513,35 @@ foreach ($Subscription in $ProcessedSubscriptions) {
                             -ObjectType "ForeignGroup" `
                             -ErrorAction Stop | Out-Null
 
-                        Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsCreated++
                     }
                 } catch {
-                    Write-Verbose "    Exception for '$($Group.Name)' on '$($Subscription.Name)': $($_.Exception)"
+                    Write-Verbose "    Exception for '$($Group.Name)' on '$($Sub.Name)': $($_.Exception)"
 
                     if ($_.Exception.Message -like "*PrincipalNotFound*") {
                         Write-Warning "    Principal not found: $($Group.Name) — excluded from all remaining assignments"
                         $SkippedPrincipalIds += $Group.ObjectId
                         break
                     } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Subscription.Name)"
+                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsExists++
                     } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
-                        Write-Warning "    Access denied: $Role for $($Group.Name) on $($Subscription.Name)"
-                        $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Subscription.Name)"
+                        Write-Warning "    Access denied: $Role for $($Group.Name) on $($Sub.Name)"
+                        $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Sub.Name)"
                     } else {
-                        Write-Warning "    Error: $Role for $($Group.Name) on $($Subscription.Name): $_"
-                        $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Subscription.Name): $_"
+                        Write-Warning "    Error: $Role for $($Group.Name) on $($Sub.Name): $_"
+                        $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Sub.Name): $_"
                     }
                 }
             }
         }
     } catch {
-        Write-Error "Failed to switch context to subscription $($Subscription.Name): $_"
-        $Errors += "Failed to switch context to subscription $($Subscription.Name): $_"
+        Write-Error "Failed to switch context to subscription $($Sub.Name): $_"
+        $Errors += "Failed to switch context to subscription $($Sub.Name): $_"
     }
+}
+
 }
 
 # =============================================================================
@@ -445,6 +550,10 @@ foreach ($Subscription in $ProcessedSubscriptions) {
 
 Write-Output ""
 Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
+
+if ($Subscription -or $ManagementGroup) {
+    Write-Output "  Skipped — targeted mode active"
+} else {
 
 $ReservationScope = "/providers/Microsoft.Capacity"
 
@@ -482,6 +591,8 @@ foreach ($Group in $ActiveReservationGroups) {
             $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
         }
     }
+}
+
 }
 
 # =============================================================================

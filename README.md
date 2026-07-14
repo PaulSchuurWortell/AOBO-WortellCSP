@@ -1,5 +1,7 @@
 # AOBO Configuration — Wortell CSP
 
+Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all management groups and subscriptions in a customer tenant, so Wortell support staff can manage the customer environment without requiring guest invitations or manual access requests.
+
 ---
 
 ## English
