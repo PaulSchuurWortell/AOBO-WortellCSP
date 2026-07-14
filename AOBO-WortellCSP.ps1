@@ -105,14 +105,19 @@ param(
     # Limit Phase 2 to one or more specific management groups (by name or display name).
     # Omit to process all management groups.
     [Parameter(Mandatory = $false)]
-    [string[]]$ManagementGroup
+    [string[]]$ManagementGroup,
+
+    # Run Phase 4 (Reservations scope) even in targeted mode.
+    # When used alone, skips Phases 2 and 3. Can be combined with -Subscription or -ManagementGroup.
+    [Parameter(Mandatory = $false)]
+    [switch]$ReservationsOnly
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260714001"
+$Version = "20260714002"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -177,10 +182,11 @@ Write-Output "AOBO Configuration Script - Wortell CSP  (version $Version)"
 if ($DryRun) {
     Write-Output "DRY RUN MODE - No changes will be made"
 }
-if ($Subscription -or $ManagementGroup) {
+if ($Subscription -or $ManagementGroup -or $ReservationsOnly) {
     Write-Output "TARGETED MODE"
-    if ($Subscription)    { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
-    if ($ManagementGroup) { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
+    if ($Subscription)     { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
+    if ($ManagementGroup)  { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
+    if ($ReservationsOnly) { Write-Output "  Reservations:      yes" }
 }
 Write-Output "================================================================================"
 Write-Output ""
@@ -361,7 +367,7 @@ if (-not $DryRun) {
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
 
-if ($Subscription -and -not $ManagementGroup) {
+if (($Subscription -or $ReservationsOnly) -and -not $ManagementGroup) {
     Write-Output "  Skipped — subscription-only targeting active"
 } else {
 if ($ManagementGroup) {
@@ -473,7 +479,7 @@ foreach ($MG in $ManagementGroups) {
 Write-Output ""
 Write-Output "[Phase 3] Assigning roles on subscriptions..."
 
-if ($ManagementGroup -and -not $Subscription) {
+if (($ManagementGroup -or $ReservationsOnly) -and -not $Subscription) {
     Write-Output "  Skipped — management-group-only targeting active"
 } else {
 
@@ -551,7 +557,7 @@ foreach ($Sub in $ProcessedSubscriptions) {
 Write-Output ""
 Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
 
-if ($Subscription -or $ManagementGroup) {
+if (($Subscription -or $ManagementGroup) -and -not $ReservationsOnly) {
     Write-Output "  Skipped — targeted mode active"
 } else {
 
