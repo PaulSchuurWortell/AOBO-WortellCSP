@@ -105,14 +105,19 @@ param(
     # Limit Phase 2 to one or more specific management groups (by name or display name).
     # Omit to process all management groups.
     [Parameter(Mandatory = $false)]
-    [string[]]$ManagementGroup
+    [string[]]$ManagementGroup,
+
+    # Run Phase 4 (Reservations scope) even in targeted mode.
+    # When used alone, skips Phases 2 and 3. Can be combined with -Subscription or -ManagementGroup.
+    [Parameter(Mandatory = $false)]
+    [switch]$ReservationsOnly
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260714001"
+$Version = "20260714004"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -177,10 +182,11 @@ Write-Output "AOBO Configuration Script - Wortell CSP  (version $Version)"
 if ($DryRun) {
     Write-Output "DRY RUN MODE - No changes will be made"
 }
-if ($Subscription -or $ManagementGroup) {
+if ($Subscription -or $ManagementGroup -or $ReservationsOnly) {
     Write-Output "TARGETED MODE"
-    if ($Subscription)    { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
-    if ($ManagementGroup) { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
+    if ($Subscription)     { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
+    if ($ManagementGroup)  { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
+    if ($ReservationsOnly) { Write-Output "  Reservations:      yes" }
 }
 Write-Output "================================================================================"
 Write-Output ""
@@ -341,6 +347,25 @@ if ($OwnerCheck) {
     }
 
     Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count) (skipped: $($SkippedSubscriptions.Count))"
+
+    if ((-not $Subscription -and -not $ManagementGroup) -or $ReservationsOnly) {
+        Write-Output ""
+        Write-Output "  [OwnerCheck] Verifying access on Reservations scope..."
+        try {
+            $ReservationAccess = Get-AzRoleAssignment `
+                -SignInName $CurrentUser.UserPrincipalName `
+                -Scope "/providers/Microsoft.Capacity" `
+                -ErrorAction Stop |
+                Where-Object { $_.RoleDefinitionName -in @("Owner", "User Access Administrator") }
+            if ($ReservationAccess) {
+                Write-Output "  ✓ Access confirmed on Reservations scope"
+            } else {
+                Write-Warning "  No Owner or UAA role found at Reservations scope — Phase 4 will likely fail. Enable 'Elevated access' under Azure AD → Properties first."
+            }
+        } catch {
+            Write-Warning "  Unable to verify Reservations scope access — Phase 4 may fail. Enable 'Elevated access' under Azure AD → Properties first."
+        }
+    }
 } else {
     $ProcessedSubscriptions = @($Subscriptions)
 }
@@ -361,7 +386,7 @@ if (-not $DryRun) {
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
 
-if ($Subscription -and -not $ManagementGroup) {
+if (($Subscription -or $ReservationsOnly) -and -not $ManagementGroup) {
     Write-Output "  Skipped — subscription-only targeting active"
 } else {
 if ($ManagementGroup) {
@@ -473,7 +498,7 @@ foreach ($MG in $ManagementGroups) {
 Write-Output ""
 Write-Output "[Phase 3] Assigning roles on subscriptions..."
 
-if ($ManagementGroup -and -not $Subscription) {
+if (($ManagementGroup -or $ReservationsOnly) -and -not $Subscription) {
     Write-Output "  Skipped — management-group-only targeting active"
 } else {
 
@@ -551,7 +576,7 @@ foreach ($Sub in $ProcessedSubscriptions) {
 Write-Output ""
 Write-Output "[Phase 4] Assigning roles on Azure Reservations scope..."
 
-if ($Subscription -or $ManagementGroup) {
+if (($Subscription -or $ManagementGroup) -and -not $ReservationsOnly) {
     Write-Output "  Skipped — targeted mode active"
 } else {
 
@@ -587,8 +612,13 @@ foreach ($Group in $ActiveReservationGroups) {
             }
         } catch {
             Write-Verbose "  Exception for '$($Group.Name)' on Reservations scope: $($_.Exception)"
-            Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
-            $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
+            if ($_.Exception.Message -like "*AuthorizationFailed*") {
+                Write-Warning "  Access denied: $Role for $($Group.Name) on Reservations scope — ensure 'Elevated access' is enabled under Azure AD → Properties before running"
+                $Warnings += "Reservations: $Role for $($Group.Name) — access denied (elevated access required)"
+            } else {
+                Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
+                $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
+            }
         }
     }
 }

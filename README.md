@@ -13,7 +13,21 @@ Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all man
 
 ---
 
-### Step 1 — Sign in to the Azure portal
+### Step 1 — Enable elevated access
+
+> **Why?** The script assigns roles on the Azure Reservations scope, which is not covered by regular administrator permissions. This one-time step grants the necessary access.
+
+1. Go to **[https://portal.azure.com](https://portal.azure.com)** and sign in
+2. Search for **Azure Active Directory** and open it
+3. Go to **Properties**
+4. Under **Access management for Azure resources**, set the toggle to **Yes**
+5. Click **Save**
+
+You can set it back to **No** after the script completes.
+
+---
+
+### Step 2 — Sign in to the Azure portal
 
 Go to **[https://portal.azure.com](https://portal.azure.com)** and sign in with your administrator account.
 
@@ -21,7 +35,7 @@ Go to **[https://portal.azure.com](https://portal.azure.com)** and sign in with 
 
 ---
 
-### Step 2 — Open Cloud Shell
+### Step 3 — Open Cloud Shell
 
 Click the **Cloud Shell button** ( `>_` ) in the top navigation bar.
 
@@ -39,7 +53,7 @@ Click the dropdown in the top-left of the shell panel and select **PowerShell**.
 
 ---
 
-### Step 3 — Run the script
+### Step 4 — Run the script
 
 Copy the command below, paste it into the Cloud Shell, and press **Enter**.
 
@@ -51,7 +65,7 @@ The script runs automatically. This may take a few minutes — do not close the 
 
 ---
 
-### Step 4 — Confirm the result
+### Step 5 — Confirm the result
 
 When the script finishes, you will see a summary ending with one of the following:
 
@@ -81,7 +95,21 @@ If you see errors and are unsure how to proceed, contact Wortell before closing 
 
 ---
 
-### Stap 1 — Aanmelden bij de Azure-portal
+### Stap 1 — Verhoogde toegang inschakelen
+
+> **Waarom?** Het script wijst rollen toe op het Azure Reservations-bereik, wat niet wordt gedekt door reguliere beheerdersmachtigingen. Deze eenmalige stap verleent de benodigde toegang.
+
+1. Ga naar **[https://portal.azure.com](https://portal.azure.com)** en meld je aan
+2. Zoek naar **Azure Active Directory** en open dit
+3. Ga naar **Eigenschappen**
+4. Zet onder **Toegangsbeheer voor Azure-resources** de schakelaar op **Ja**
+5. Klik op **Opslaan**
+
+Je kunt dit na afloop van het script weer op **Nee** zetten.
+
+---
+
+### Stap 2 — Aanmelden bij de Azure-portal
 
 Ga naar **[https://portal.azure.com](https://portal.azure.com)** en meld je aan met je beheerdersaccount.
 
@@ -89,7 +117,7 @@ Ga naar **[https://portal.azure.com](https://portal.azure.com)** en meld je aan 
 
 ---
 
-### Stap 2 — Cloud Shell openen
+### Stap 3 — Cloud Shell openen
 
 Klik op de **Cloud Shell-knop** ( `>_` ) in de bovenste navigatiebalk.
 
@@ -107,7 +135,7 @@ Klik op het vervolgkeuzemenu linksboven in het shellvenster en selecteer **Power
 
 ---
 
-### Stap 3 — Script uitvoeren
+### Stap 4 — Script uitvoeren
 
 Kopieer de onderstaande opdracht, plak deze in de Cloud Shell en druk op **Enter**.
 
@@ -119,7 +147,7 @@ Het script wordt automatisch uitgevoerd. Dit kan een paar minuten duren — slui
 
 ---
 
-### Stap 4 — Resultaat bevestigen
+### Stap 5 — Resultaat bevestigen
 
 Wanneer het script klaar is, zie je een samenvatting die eindigt met:
 
