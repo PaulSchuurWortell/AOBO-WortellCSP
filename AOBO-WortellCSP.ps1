@@ -107,7 +107,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260626006"
+$Version = "20260626007"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -401,7 +401,10 @@ if ($ManagementGroup) {
     }
 }
 
+$MgIndex = 0
 foreach ($MG in $ManagementGroups) {
+    $MgIndex++
+    Write-Output "  [$MgIndex/$($ManagementGroups.Count)] $($MG.DisplayName)"
     $ProcessedManagementGroups += $MG
     $MgScope = "/providers/Microsoft.Management/managementgroups/$($MG.Name)"
 
@@ -469,7 +472,10 @@ if ($ManagementGroup -and -not $Subscription) {
     Write-Output "  Skipped — management-group-only targeting active"
 } else {
 
+$SubIndex = 0
 foreach ($Sub in $ProcessedSubscriptions) {
+    $SubIndex++
+    Write-Output "  [$SubIndex/$($ProcessedSubscriptions.Count)] $($Sub.Name)"
     try {
         Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
         Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
