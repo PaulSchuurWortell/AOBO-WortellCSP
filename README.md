@@ -1,6 +1,6 @@
 # AOBO Configuration — Wortell CSP
 
-Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all management groups and subscriptions in a customer tenant, so Wortell support staff can manage the customer environment without requiring guest invitations or manual access requests.
+Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all subscriptions in a customer tenant, so Wortell support staff can manage the customer environment without requiring guest invitations or manual access requests.
 
 ---
 
@@ -22,8 +22,6 @@ Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all man
 3. Go to **Properties**
 4. Under **Access management for Azure resources**, set the toggle to **Yes**
 5. Click **Save**
-
-You can set it back to **No** after the script completes.
 
 ---
 
@@ -84,6 +82,14 @@ or
 If you see errors and are unsure how to proceed, contact Wortell before closing the browser.
 
 ---
+
+### Step 6 — Disable elevated access
+
+1. Go to **Azure Active Directory → Properties**
+2. Set **Access management for Azure resources** back to **No**
+3. Click **Save**
+
+---
 ---
 
 ## Nederlands
@@ -104,8 +110,6 @@ If you see errors and are unsure how to proceed, contact Wortell before closing 
 3. Ga naar **Eigenschappen**
 4. Zet onder **Toegangsbeheer voor Azure-resources** de schakelaar op **Ja**
 5. Klik op **Opslaan**
-
-Je kunt dit na afloop van het script weer op **Nee** zetten.
 
 ---
 
@@ -164,3 +168,11 @@ of
 **Maak een screenshot van de volledige samenvatting en stuur deze naar jouw Wortell-contactpersoon ter bevestiging van de uitvoering.**
 
 Zie je foutmeldingen en weet je niet hoe verder? Neem dan contact op met Wortell voordat je het browservenster sluit.
+
+---
+
+### Stap 6 — Verhoogde toegang uitschakelen
+
+1. Ga naar **Azure Active Directory → Eigenschappen**
+2. Zet **Toegangsbeheer voor Azure-resources** terug op **Nee**
+3. Klik op **Opslaan**
