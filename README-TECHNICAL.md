@@ -1,10 +1,10 @@
 # AOBO-WortellCSP
 
-Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all management groups and subscriptions in a customer tenant, so Wortell support staff can manage the customer environment without requiring guest invitations or manual access requests.
+Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all subscriptions in a customer tenant, so Wortell support staff can manage the customer environment without requiring guest invitations or manual access requests. Management group assignments are opt-in via `-IncludeManagementGroups`.
 
 ## Introduction
 
-**Admin On Behalf Of (AOBO)** is a security model in Azure that allows Managed Service Providers (MSPs) to manage customer Azure subscriptions on their behalf. This script automates the configuration of AOBO role assignments across all subscriptions and management groups in a customer tenant.
+**Admin On Behalf Of (AOBO)** is a security model in Azure that allows Managed Service Providers (MSPs) to manage customer Azure subscriptions on their behalf. This script automates the configuration of AOBO role assignments across all subscriptions in a customer tenant, with management groups included on request.
 
 The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
@@ -12,7 +12,7 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 - **Wortell CSP Tier 2 AdminAgents** — Owner role
 - **IngramMicroNL AdminAgents** — Support Request Contributor role
 
-The script ensures these groups have the appropriate permissions on all management groups and subscriptions, enabling support teams to assist customers without requiring guest invitations.
+By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. Pass `-IncludeManagementGroups` to also assign roles at the management group level.
 
 ---
 
@@ -90,7 +90,11 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1 -Subscription "My Subscription"
 .\AOBO-WortellCSP.ps1 -Subscription "My Subscription", "00000000-0000-0000-0000-000000000000"
 
+# Also assign roles on management groups (Phase 2 is skipped by default)
+.\AOBO-WortellCSP.ps1 -IncludeManagementGroups
+
 # Limit to specific management groups (by name or display name; accepts one or more values)
+# Implies -IncludeManagementGroups — no need to pass both
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production"
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production", "Staging"
 
@@ -122,7 +126,7 @@ To validate prerequisites without making any changes:
 
 ### Targeted Mode
 
-Use `-Subscription` and/or `-ManagementGroup` to restrict the script to specific scopes. This is useful when a customer has many subscriptions or management groups and only a subset needs to be configured.
+Use `-Subscription`, `-ManagementGroup`, and/or `-IncludeManagementGroups` to restrict or expand the script's scope. This is useful when a customer has many subscriptions or management groups and only a subset needs to be configured, or when management groups should be included alongside the default subscription-only run.
 
 ```powershell
 # Only assign roles on the "Production" management group
@@ -133,20 +137,27 @@ Use `-Subscription` and/or `-ManagementGroup` to restrict the script to specific
 
 # Combine: specific MG and specific subscription
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production" -Subscription "Sub A"
+
+# Default subscription run, plus all management groups
+.\AOBO-WortellCSP.ps1 -IncludeManagementGroups
 ```
 
-**Behavior in targeted mode:**
+**Behavior by flag combination:**
 
 | Targeting | Phase 2 (MGs) | Phase 3 (Subscriptions) | Phase 4 (Reservations) |
 | --------- | ------------- | ----------------------- | ---------------------- |
-| Neither set (full run) | All MGs | All subscriptions | ✓ |
-| `-Subscription` only | Skipped | Filtered subscriptions | Skipped |
+| None set (default) | Skipped | All subscriptions | ✓ |
+| `-IncludeManagementGroups` | All MGs | All subscriptions | ✓ |
 | `-ManagementGroup` only | Filtered MGs | Skipped | Skipped |
+| `-Subscription` only | Skipped | Filtered subscriptions | Skipped |
 | `-ReservationsOnly` | Skipped | Skipped | ✓ |
+| `-Subscription -IncludeManagementGroups` | All MGs | Filtered subscriptions | Skipped |
 | `-Subscription -ReservationsOnly` | Skipped | Filtered subscriptions | ✓ |
 | `-ManagementGroup -ReservationsOnly` | Filtered MGs | Skipped | ✓ |
 | `-ManagementGroup -Subscription` | Filtered MGs | Filtered subscriptions | Skipped |
-| All three set | Filtered MGs | Filtered subscriptions | ✓ |
+| All targeting parameters set | Filtered MGs | Filtered subscriptions | ✓ |
+
+`-ManagementGroup` always runs Phase 2 targeted to the specified group(s) — it implies `-IncludeManagementGroups`, so there's no need to pass both.
 
 **Notes:**
 
@@ -168,7 +179,7 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
 | 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription and Reservations scope (`-OwnerCheck`) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
-| 2 | Assign configured roles to all management groups (or those matching `-ManagementGroup`); skipped entirely when `-Subscription` is set without `-ManagementGroup`; `PrincipalNotFound` excludes the group from all remaining phases; `AuthorizationFailed` is a non-blocking warning | — |
+| 2 | Skipped by default. Runs when `-IncludeManagementGroups` or `-ManagementGroup` is used, assigning configured roles to all management groups (or those matching `-ManagementGroup`); `PrincipalNotFound` excludes the group from all remaining phases; `AuthorizationFailed` is a non-blocking warning | — |
 | 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
 | 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Azure AD — `AuthorizationFailed` is recorded as a non-blocking warning | — |
 | Summary | Display results — MG and subscription counts, role assignment totals, skipped principals, and any warnings or errors | — |
@@ -191,6 +202,8 @@ The script version (format `YYYYMMDDnnn`) is printed in the opening banner on ev
 Normal output shows phase headers, a progress line per management group and subscription, new assignments created, warnings, errors, and the final summary. Run with `-Verbose` to also see already-existing assignments and full exception details.
 
 ## Example Output
+
+Example of a run with `-IncludeManagementGroups` (Phase 2 is skipped by default):
 
 ```plaintext
 [Phase 2] Assigning roles on management groups...
