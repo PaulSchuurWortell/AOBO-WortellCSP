@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     This script configures AOBO role assignments for Wortell CSP Tier 1 & 2 AdminAgents
-    and IngramMicroNL AdminAgents on all subscriptions and management groups within a
-    customer tenant.
+    and IngramMicroNL AdminAgents on all subscriptions within a customer tenant. Management
+    group assignments are opt-in via -IncludeManagementGroups or -ManagementGroup.
 
     Based on: IngramMicroNL AOBO scripts
     Reference: https://github.com/IngramMicroNL/Azure/tree/main/AOBO%20-%20AdminOnBehalfOf
@@ -23,6 +23,12 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.8 (July 30, 2026)
+    - Changed default scope: Phase 2 (management groups) is now opt-in via -IncludeManagementGroups
+    - -ManagementGroup continues to run Phase 2 targeted to the specified group(s) without requiring
+      -IncludeManagementGroups
+    - Banner and Phase 2 skip message reflect the new default
+
     v1.6 (July 14, 2026)
     - Added -Subscription parameter: limit Phase 3 to one or more specific subscriptions (name or ID)
     - Added -ManagementGroup parameter: limit Phase 2 to one or more specific management groups (name or display name)
@@ -77,6 +83,9 @@
 
 .EXAMPLE
     .\AOBO-WortellCSP.ps1 -DryRun
+
+.EXAMPLE
+    .\AOBO-WortellCSP.ps1 -IncludeManagementGroups
 #>
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification = 'File must use UTF-8 without BOM for Invoke-Expression compatibility when downloading via Invoke-WebRequest')]
@@ -103,9 +112,14 @@ param(
     [string[]]$Subscription,
 
     # Limit Phase 2 to one or more specific management groups (by name or display name).
-    # Omit to process all management groups.
+    # Omit to process all management groups. Implies -IncludeManagementGroups.
     [Parameter(Mandatory = $false)]
     [string[]]$ManagementGroup,
+
+    # Opt-in: also run Phase 2 (management group role assignments).
+    # By default, only subscriptions (Phase 3) are targeted. Not needed when -ManagementGroup is used.
+    [Parameter(Mandatory = $false)]
+    [switch]$IncludeManagementGroups,
 
     # Run Phase 4 (Reservations scope) even in targeted mode.
     # When used alone, skips Phases 2 and 3. Can be combined with -Subscription or -ManagementGroup.
@@ -117,7 +131,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260714004"
+$Version = "20260730001"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -187,6 +201,11 @@ if ($Subscription -or $ManagementGroup -or $ReservationsOnly) {
     if ($Subscription)     { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
     if ($ManagementGroup)  { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
     if ($ReservationsOnly) { Write-Output "  Reservations:      yes" }
+}
+if ($ManagementGroup -or $IncludeManagementGroups) {
+    Write-Output "Management groups: included"
+} else {
+    Write-Output "Management groups: excluded by default (use -IncludeManagementGroups to include)"
 }
 Write-Output "================================================================================"
 Write-Output ""
@@ -386,8 +405,8 @@ if (-not $DryRun) {
 Write-Output ""
 Write-Output "[Phase 2] Assigning roles on management groups..."
 
-if (($Subscription -or $ReservationsOnly) -and -not $ManagementGroup) {
-    Write-Output "  Skipped — subscription-only targeting active"
+if (-not ($ManagementGroup -or $IncludeManagementGroups)) {
+    Write-Output "  Skipped — management groups excluded by default (use -IncludeManagementGroups to include)"
 } else {
 if ($ManagementGroup) {
     # Fetch each specified MG directly by name to avoid requiring list-all permission.
