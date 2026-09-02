@@ -379,10 +379,10 @@ if ($OwnerCheck) {
             if ($ReservationAccess) {
                 Write-Output "  ✓ Access confirmed on Reservations scope"
             } else {
-                Write-Warning "  No Owner or UAA role found at Reservations scope — Phase 4 will likely fail. Enable 'Elevated access' under Azure AD → Properties first."
+                Write-Warning "  No Owner or UAA role found at Reservations scope — Phase 4 will likely fail. Enable 'Elevated access' under Entra ID → Properties first."
             }
         } catch {
-            Write-Warning "  Unable to verify Reservations scope access — Phase 4 may fail. Enable 'Elevated access' under Azure AD → Properties first."
+            Write-Warning "  Unable to verify Reservations scope access — Phase 4 may fail. Enable 'Elevated access' under Entra ID → Properties first."
         }
     }
 } else {
@@ -632,7 +632,7 @@ foreach ($Group in $ActiveReservationGroups) {
         } catch {
             Write-Verbose "  Exception for '$($Group.Name)' on Reservations scope: $($_.Exception)"
             if ($_.Exception.Message -like "*AuthorizationFailed*") {
-                Write-Warning "  Access denied: $Role for $($Group.Name) on Reservations scope — ensure 'Elevated access' is enabled under Azure AD → Properties before running"
+                Write-Warning "  Access denied: $Role for $($Group.Name) on Reservations scope — ensure 'Elevated access' is enabled under Entra ID → Properties before running"
                 $Warnings += "Reservations: $Role for $($Group.Name) — access denied (elevated access required)"
             } else {
                 Write-Warning "  Error assigning $Role to $($Group.Name) on Reservations scope: $_"
