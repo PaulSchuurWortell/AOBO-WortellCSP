@@ -23,7 +23,11 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
-    v1.8 (July 30, 2026)
+    v1.9 (September 2, 2026)
+    - Renamed "Azure Active Directory" / "Azure AD" references to "Entra ID" in script warning
+      messages, matching Microsoft's current product naming
+
+    v1.8 (September 2, 2026)
     - Changed default scope: Phase 2 (management groups) is now opt-in via -IncludeManagementGroups
     - -ManagementGroup continues to run Phase 2 targeted to the specified group(s) without requiring
       -IncludeManagementGroups
@@ -131,7 +135,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260730001"
+$Version = "20260902002"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
