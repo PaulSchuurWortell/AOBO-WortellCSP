@@ -61,9 +61,13 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 The script runs automatically. This may take a few minutes — do not close the browser window.
 
+> **What this does:** After a 5-second countdown (press **Ctrl+C** to cancel), the script assigns the Wortell and Ingram Micro support groups access to **every enabled subscription** in this tenant. This is a real, live change — not a preview. Management groups are not touched.
+
 ---
 
 ### Step 5 — Confirm the result
+
+When the script finishes its summary, it will wait for you to press **Enter** before the prompt returns. This is expected — the script has already completed; it has not frozen.
 
 When the script finishes, you will see a summary ending with one of the following:
 
@@ -149,9 +153,13 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 Het script wordt automatisch uitgevoerd. Dit kan een paar minuten duren — sluit het browservenster niet.
 
+> **Wat dit doet:** Na een aftelling van 5 seconden (druk op **Ctrl+C** om te annuleren) wijst het script de Wortell- en Ingram Micro-supportgroepen toegang toe tot **elk ingeschakeld abonnement** in deze tenant. Dit is een echte, directe wijziging — geen voorbeeldweergave. Management groups worden niet aangepast.
+
 ---
 
 ### Stap 5 — Resultaat bevestigen
+
+Wanneer het script klaar is met de samenvatting, wacht het tot je op **Enter** drukt voordat de prompt terugkeert. Dit is normaal gedrag — het script is al voltooid en is niet vastgelopen.
 
 Wanneer het script klaar is, zie je een samenvatting die eindigt met:
 

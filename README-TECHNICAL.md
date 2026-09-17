@@ -166,9 +166,15 @@ Use `-Subscription`, `-ManagementGroup`, and/or `-IncludeManagementGroups` to re
 - If a specified value is not found, a warning is printed and the script continues with whatever was matched
 - Phase 4 requires elevated access in Entra ID — see [Prerequisites](#prerequisites)
 
+**Running with no parameters at all** performs a live (non-dry-run) execution: Phase 2 is skipped, Phase 3 assigns roles on every enabled subscription in the tenant, and Phase 4 assigns roles on the Reservations scope — see the "None set (default)" row above. Use `-DryRun` first if you want to preview this without making changes.
+
 **Cancel window:**
 
 When running without `-DryRun`, the script pauses for 5 seconds after Phase 1 (discovery) before making any changes. Press **Ctrl+C** during this window to abort without any assignments being made.
+
+**End-of-run pause:**
+
+After printing the summary, the script calls `Pause` and waits for a keypress (Enter) before returning control to the shell. This is expected — the script has already finished; it is not stuck.
 
 ---
 

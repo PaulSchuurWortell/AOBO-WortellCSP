@@ -23,6 +23,11 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.11 (September 17, 2026)
+    - README/README-TECHNICAL: documented that running with no parameters performs a live
+      (non-dry-run) run across all subscriptions, plus the 5-second cancel window and the
+      end-of-run Pause prompt
+
     v1.10 (September 17, 2026)
     - Added "Quota Request Operator" role to IngramMicroNL AdminAgents, alongside existing
       "Support Request Contributor" role
@@ -139,7 +144,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260917001"
+$Version = "20260917002"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
