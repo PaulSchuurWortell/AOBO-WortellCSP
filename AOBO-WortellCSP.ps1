@@ -23,6 +23,10 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.12 (September 17, 2026)
+    - README: added Owner / User Access Administrator subscription-level requirement to
+      "What you need" (previously only in README-TECHNICAL prerequisites)
+
     v1.11 (September 17, 2026)
     - README/README-TECHNICAL: documented that running with no parameters performs a live
       (non-dry-run) run across all subscriptions, plus the 5-second cancel window and the
@@ -144,7 +148,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260917002"
+$Version = "20260917003"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
