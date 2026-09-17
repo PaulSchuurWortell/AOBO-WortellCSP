@@ -23,6 +23,19 @@
     - Active GDAP relationship with Wortell and Ingram Micro
 
 .CHANGELOG
+    v1.12 (September 17, 2026)
+    - README: added Owner / User Access Administrator subscription-level requirement to
+      "What you need" (previously only in README-TECHNICAL prerequisites)
+
+    v1.11 (September 17, 2026)
+    - README/README-TECHNICAL: documented that running with no parameters performs a live
+      (non-dry-run) run across all subscriptions, plus the 5-second cancel window and the
+      end-of-run Pause prompt
+
+    v1.10 (September 17, 2026)
+    - Added "Quota Request Operator" role to IngramMicroNL AdminAgents, alongside existing
+      "Support Request Contributor" role
+
     v1.9 (September 2, 2026)
     - Renamed "Azure Active Directory" / "Azure AD" references to "Entra ID" in script warning
       messages, matching Microsoft's current product naming
@@ -135,7 +148,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20260902002"
+$Version = "20260917003"
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -155,7 +168,7 @@ $Groups = @(
     @{
         Name     = "IngramMicroNL AdminAgents"
         ObjectId = "34c4dd11-78c0-41e5-8370-c6dbf16bc3e9"
-        Roles    = @("Support Request Contributor")
+        Roles    = @("Support Request Contributor", "Quota Request Operator")
     }
 )
 

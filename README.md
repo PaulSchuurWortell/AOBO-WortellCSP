@@ -8,7 +8,9 @@ Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all sub
 
 ### What you need
 
-- An Azure account with **Global Administrator** rights on the tenant
+- **Owner** or **User Access Administrator** rights on every subscription the script should configure — this is what lets it actually create the role assignments
+- An Azure account with **Global Administrator** rights on the tenant — needed for Step 1 below, which grants your account Owner/User Access Administrator at the root management group (covering every subscription) plus access to the Reservations scope
+  - Already have Owner/User Access Administrator on the subscriptions directly? You can skip the root-management-group part, but you still need Step 1's elevated access toggle enabled for the Reservations scope to succeed
 - Access to the Azure portal
 
 ---
@@ -61,9 +63,13 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 The script runs automatically. This may take a few minutes — do not close the browser window.
 
+> **What this does:** After a 5-second countdown (press **Ctrl+C** to cancel), the script assigns the Wortell and Ingram Micro support groups access to **every enabled subscription** in this tenant. This is a real, live change — not a preview. Management groups are not touched.
+
 ---
 
 ### Step 5 — Confirm the result
+
+When the script finishes its summary, it will wait for you to press **Enter** before the prompt returns. This is expected — the script has already completed; it has not frozen.
 
 When the script finishes, you will see a summary ending with one of the following:
 
@@ -96,7 +102,9 @@ If you see errors and are unsure how to proceed, contact Wortell before closing 
 
 ### Wat je nodig hebt
 
-- Een Azure-account met de rol **Globale beheerder (Global Administrator)** op de tenant
+- De rol **Eigenaar (Owner)** of **Gebruikerstoegangsbeheerder (User Access Administrator)** op elk abonnement dat het script moet configureren — dit is wat het script daadwerkelijk in staat stelt om roltoewijzingen aan te maken
+- Een Azure-account met de rol **Globale beheerder (Global Administrator)** op de tenant — nodig voor Stap 1 hieronder, die je account Owner/User Access Administrator geeft op de root management group (dekt alle abonnementen) plus toegang tot het Reservations-bereik
+  - Heb je al Owner/User Access Administrator rechtstreeks op de abonnementen? Dan kun je het root-management-group-gedeelte overslaan, maar je hebt de verhoogde toegang uit Stap 1 nog steeds nodig om het Reservations-bereik te laten slagen
 - Toegang tot de Azure-portal
 
 ---
@@ -149,9 +157,13 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 
 Het script wordt automatisch uitgevoerd. Dit kan een paar minuten duren — sluit het browservenster niet.
 
+> **Wat dit doet:** Na een aftelling van 5 seconden (druk op **Ctrl+C** om te annuleren) wijst het script de Wortell- en Ingram Micro-supportgroepen toegang toe tot **elk ingeschakeld abonnement** in deze tenant. Dit is een echte, directe wijziging — geen voorbeeldweergave. Management groups worden niet aangepast.
+
 ---
 
 ### Stap 5 — Resultaat bevestigen
+
+Wanneer het script klaar is met de samenvatting, wacht het tot je op **Enter** drukt voordat de prompt terugkeert. Dit is normaal gedrag — het script is al voltooid en is niet vastgelopen.
 
 Wanneer het script klaar is, zie je een samenvatting die eindigt met:
 
