@@ -10,7 +10,7 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 - **Wortell CSP Tier 1 AdminAgents** — Owner role
 - **Wortell CSP Tier 2 AdminAgents** — Owner role
-- **IngramMicroNL AdminAgents** — Support Request Contributor role
+- **IngramMicroNL AdminAgents** — Support Request Contributor role, Quota Request Operator role
 
 By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. Pass `-IncludeManagementGroups` to also assign roles at the management group level.
 
