@@ -27,6 +27,15 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.17 (November 27, 2026)
+    - New defaults: the AOBO groups get no role assignments on management groups, only on
+      subscriptions (and the Reservations scope). -Enforce now removes assignments of the groups
+      on all management groups, without needing -IncludeManagementGroups. The tenant root
+      management group is ignored. Not done in targeted mode (-Subscription / -ReservationsOnly)
+    - Explicit opt-in (-IncludeManagementGroups / -ManagementGroup) still assigns the roles on
+      management groups and -Enforce then treats those roles as the defaults there (tenant root
+      still ignored)
+
     v1.16 (November 27, 2026)
     - Added -Enforce: check the role assignments of the three AOBO groups and restore them to
       the script defaults. Missing assignments are created; direct assignments that are not part
@@ -194,8 +203,10 @@ param(
     # Opt-in: check the current role assignments of the AOBO groups and restore them to the defaults
     # of this script. Missing assignments are created (as normal) and direct assignments that are NOT
     # part of the defaults are REMOVED, per scope: subscriptions, Reservations scope (/providers/
-    # Microsoft.Capacity) and - only with -IncludeManagementGroups / -ManagementGroup - management groups.
-    # Only assignments of the three AOBO groups on the exact scope are touched. Preview with -WhatIf.
+    # Microsoft.Capacity) and management groups. The default on management groups is NO assignments
+    # (unless -IncludeManagementGroups / -ManagementGroup is used); the tenant root management group
+    # is ignored. Only assignments of the three AOBO groups on the exact scope are touched.
+    # Preview with -WhatIf.
     [Parameter(Mandatory = $false)]
     [switch]$Enforce,
 
@@ -208,7 +219,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127004"
+$Version = "20261127005"
 
 # -DryRun (legacy) is equivalent to -WhatIf. $DryRun is then used throughout the script as the
 # "preview only" flag for messages and counters; the actual writes are guarded by ShouldProcess.
@@ -390,6 +401,11 @@ if ($Enforce) {
     } else {
         Write-Output "ENFORCE MODE - assignments of the AOBO groups that are not part of the defaults will be REMOVED"
     }
+    if ($ManagementGroup -or $IncludeManagementGroups) {
+        Write-Output "  Defaults: subscriptions + Reservations scope; management groups per explicit opt-in (tenant root ignored)"
+    } else {
+        Write-Output "  Defaults: subscriptions + Reservations scope only; no management group assignments (tenant root ignored)"
+    }
 }
 if ($ManagementGroup -or $IncludeManagementGroups) {
     Write-Output "Management groups: included"
@@ -425,6 +441,10 @@ if ($Subscriptions.Count -eq 0) {
     Write-Error "No enabled subscriptions found in this tenant"
     return
 }
+
+# Tenant ID: the tenant root management group has this ID as its name (ignored by -Enforce)
+$TenantId = $null
+try { $TenantId = (Get-AzContext -ErrorAction Stop).Tenant.Id } catch { Write-Verbose "  Unable to determine tenant ID: $($_.Exception.Message)" }
 
 # --- Validate role definition IDs against their role names ---
 foreach ($RoleName in @($RoleIds.Keys)) {
@@ -630,6 +650,32 @@ Write-Output "[Phase 2] Assigning roles on management groups..."
 
 if (-not ($ManagementGroup -or $IncludeManagementGroups)) {
     Write-Output "  Skipped — management groups excluded by default (use -IncludeManagementGroups to include)"
+
+    # -Enforce: the default is NO assignments of the AOBO groups on management groups, so remove any
+    # that exist. The tenant root management group is ignored. Not done in targeted mode
+    # (-Subscription / -ReservationsOnly).
+    if ($Enforce -and -not ($Subscription -or $ReservationsOnly)) {
+        Write-Output "  Enforce: checking management groups for assignments of the AOBO groups (default: none; tenant root ignored)..."
+        try {
+            $EnforceMGs = @(Get-AzManagementGroup -ErrorAction Stop)
+        } catch {
+            Write-Warning "  Enforce: unable to list management groups — $($_.Exception.Message)"
+            $Warnings += "Enforce: could not list management groups, management group assignments not checked"
+            $EnforceMGs = @()
+        }
+        foreach ($MG in $EnforceMGs) {
+            if ($MG.Name -eq $TenantId) {
+                Write-Verbose "  Ignored tenant root management group: $($MG.DisplayName)"
+                continue
+            }
+            $ProcessedManagementGroups += $MG
+            $MgScope = "/providers/Microsoft.Management/managementgroups/$($MG.Name)"
+            foreach ($Group in $ActiveGroups) {
+                if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
+                Invoke-EnforceScope -Scope $MgScope -ScopeLabel "MG $($MG.DisplayName)" -Group $Group -DesiredRoles @()
+            }
+        }
+    }
 } else {
 if ($ManagementGroup) {
     # Fetch each specified MG directly by name to avoid requiring list-all permission.
@@ -737,7 +783,7 @@ foreach ($MG in $ManagementGroups) {
         }
 
         # -Enforce: remove assignments of this group on this MG that are not part of the defaults
-        if ($Enforce -and $Group.ObjectId -notin $SkippedPrincipalIds) {
+        if ($Enforce -and $Group.ObjectId -notin $SkippedPrincipalIds -and $MG.Name -ne $TenantId) {
             Invoke-EnforceScope -Scope $MgScope -ScopeLabel "MG $($MG.DisplayName)" -Group $Group -DesiredRoles @($Group.Roles)
         }
     }
@@ -979,8 +1025,10 @@ if ($Enforce) {
     foreach ($L in $EnforceLog) {
         Write-Output "    - $L"
     }
-    if (-not ($ManagementGroup -or $IncludeManagementGroups)) {
-        Write-Output "  (management groups not checked — use -IncludeManagementGroups to include them)"
+    if ($Subscription -or $ReservationsOnly) {
+        Write-Output "  (management groups not checked — targeted mode)"
+    } elseif (-not ($ManagementGroup -or $IncludeManagementGroups)) {
+        Write-Output "  (management groups: default is no assignments — any found were removed; tenant root ignored)"
     }
 }
 

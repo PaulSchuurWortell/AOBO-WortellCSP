@@ -16,7 +16,7 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 | Principal | Role | Scope | Condition |
 | --------- | ---- | ----- | --------- |
-| Wortell CSP Tier 1 / Tier 2 AdminAgents | Owner | Every subscription (and MGs with `-IncludeManagementGroups`) | — |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Owner | Every subscription (management groups only with explicit `-IncludeManagementGroups`; not part of the defaults) | — |
 | Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Subscription | Only where the group has no Owner on that subscription |
 | Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
 | Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Administrator (`a8889054-8d42-49c9-bc1c-52486c10e7cd`) | `/providers/Microsoft.Capacity` | Only with `-IncludeReservationsAdministrator`; requires elevated access |
@@ -26,7 +26,7 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 The reservation roles are assigned by role definition ID; Phase 1 validates each ID against its role name and skips a role (with a warning) on mismatch. Because Reservation Purchaser allows purchases that are billed to the customer, RI purchases should only run via an order from Wortell to Ingram Micro.
 
-By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. Pass `-IncludeManagementGroups` to also assign roles at the management group level.
+By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. **The defaults do not include any rights on management groups** — only subscriptions (and the Reservations scope). Use `-Enforce` to remove management group assignments that exist; assignments on the tenant root management group are ignored. Pass `-IncludeManagementGroups` only in exceptional cases to also assign roles at the management group level.
 
 ---
 
@@ -139,7 +139,10 @@ Then run with any combination of parameters:
 
 - **Missing** default assignments are created, exactly as in a normal run.
 - **Extra** direct assignments of the AOBO groups that are not part of the defaults are **removed**. Examples: a Contributor role for IngramMicroNL AdminAgents on a subscription, or Reservations Administrator on the Reservations scope without `-IncludeReservationsAdministrator`.
-- Scopes checked: subscriptions, the Reservations scope (`/providers/Microsoft.Capacity`, needs elevated access) and — **only** with `-IncludeManagementGroups` or `-ManagementGroup` — management groups. Without those switches, management group assignments are left untouched. Resource group and resource level assignments are never checked.
+- Scopes checked: subscriptions, the Reservations scope (`/providers/Microsoft.Capacity`, needs elevated access) and **management groups**. Resource group and resource level assignments are never checked.
+- **Management groups: the default is no assignments.** The new defaults only place rights on subscriptions (and the Reservations scope). `-Enforce` therefore **removes** assignments of the three AOBO groups on every management group, without needing `-IncludeManagementGroups`. This is skipped in targeted mode (`-Subscription`, `-ReservationsOnly`).
+- **Tenant root management group is ignored.** Assignments of the groups on the tenant root group (the management group whose name equals the tenant ID) are never removed by `-Enforce`.
+- Explicit opt-in: if you pass `-IncludeManagementGroups` or `-ManagementGroup`, the script still assigns the configured roles on management groups, and `-Enforce` then treats those roles as the defaults there (extras are still removed; tenant root still ignored). This is only for exceptional situations — it is not part of the new defaults.
 - The defaults per scope are the roles in the table under [Roles per principal](#roles-per-principal). On a subscription, Reservation Purchaser for Wortell is only a default where the group has no Owner.
 - Never touched: assignments of other principals, inherited assignments (only the exact scope is evaluated), and roles whose ID could not be validated in Phase 1.
 - Combine with `-WhatIf` to see what would change: each removal is shown as `What if: Performing the operation "Remove '<role>' from <group>"` and the summary lists all of them. `-Confirm` asks per removal.
@@ -237,7 +240,7 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 - **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
 - **WhatIf throughout:** The `-WhatIf` switch is checked inside every assignment block, not just at the entry point.
-- **Enforce:** `-Enforce` compares the AOBO groups' direct assignments per scope with the defaults and removes extras (via `Invoke-EnforceScope`, which honors `-WhatIf`/`-Confirm`); MGs only with the MG opt-in.
+- **Enforce:** `-Enforce` compares the AOBO groups' direct assignments per scope with the defaults and removes extras (via `Invoke-EnforceScope`, which honors `-WhatIf`/`-Confirm`); defaults: no MG assignments (tenant root ignored), unless the MG opt-in is used.
 - **Graceful principal handling:** If a foreign principal is not found in the tenant during assignment, it is skipped for all remaining phases without retrying. Use `-PrincipalCheck` for early detection.
 - **Non-blocking warnings:** Authorization failures on individual assignments and all Reservations-scope errors are reported as warnings — they appear in the summary but do not change SUCCESS to FAILURE.
 
