@@ -27,6 +27,12 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.18 (November 27, 2026)
+    - Fix: "You cannot call a method on a null-valued expression" when the script is run via
+      Invoke-Expression (Cloud Shell one-liner). $PSCmdlet does not exist in that case, so
+      ShouldProcess/ShouldContinue now go through a fallback that works without it. Parameters
+      such as -WhatIf and -Enforce still require running the downloaded script file
+
     v1.17 (November 27, 2026)
     - New defaults: the AOBO groups get no role assignments on management groups, only on
       subscriptions (and the Reservations scope). -Enforce now removes assignments of the groups
@@ -219,7 +225,22 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127005"
+$Version = "20261127006"
+
+# $PSCmdlet only exists when the script runs as a script file. When run via Invoke-Expression
+# (Cloud Shell one-liner) it is $null, so all ShouldProcess calls go through Test-ShouldProcess.
+$ScriptCmdlet = $PSCmdlet
+
+function Test-ShouldProcess {
+    param([string]$Target, [string]$Action)
+    if ($ScriptCmdlet) { return $ScriptCmdlet.ShouldProcess($Target, $Action) }
+    # No script cmdlet (Invoke-Expression): no -WhatIf/-Confirm parameters, but honor $WhatIfPreference
+    if ($WhatIfPreference) {
+        Write-Host "What if: Performing the operation `"$Action`" on target `"$Target`"."
+        return $false
+    }
+    return $true
+}
 
 # -DryRun (legacy) is equivalent to -WhatIf. $DryRun is then used throughout the script as the
 # "preview only" flag for messages and counters; the actual writes are guarded by ShouldProcess.
@@ -635,7 +656,13 @@ if (-not $DryRun) {
 }
 
 if ($Enforce -and -not $DryRun -and -not $Force) {
-    if (-not $PSCmdlet.ShouldContinue("-Enforce will REMOVE role assignments of the AOBO groups that are not part of the defaults (use -WhatIf first to preview). Continue?", "Enforce")) {
+    $EnforceQuery = "-Enforce will REMOVE role assignments of the AOBO groups that are not part of the defaults (use -WhatIf first to preview). Continue?"
+    if ($ScriptCmdlet) {
+        $EnforceConfirmed = $ScriptCmdlet.ShouldContinue($EnforceQuery, "Enforce")
+    } else {
+        $EnforceConfirmed = (Read-Host "$EnforceQuery Type YES to continue") -eq "YES"
+    }
+    if (-not $EnforceConfirmed) {
         Write-Output "Cancelled — nothing was changed."
         return
     }
@@ -743,7 +770,7 @@ foreach ($MG in $ManagementGroups) {
                 if ($RBACCheck) {
                     Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsExists++
-                } elseif (-not $PSCmdlet.ShouldProcess($MgScope, "Assign '$Role' to $($Group.Name)")) {
+                } elseif (-not (Test-ShouldProcess -Target $MgScope -Action "Assign '$Role' to $($Group.Name)")) {
                     if ($DryRun) {
                         Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
                         $MgRoleAssignmentsCreated++
@@ -849,7 +876,7 @@ foreach ($Sub in $ProcessedSubscriptions) {
                     if ($RBACCheck) {
                         Write-Verbose "    → Already present: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
-                    } elseif (-not $PSCmdlet.ShouldProcess($Scope, "Assign '$Role' to $($Group.Name)")) {
+                    } elseif (-not (Test-ShouldProcess -Target $Scope -Action "Assign '$Role' to $($Group.Name)")) {
                         if ($DryRun) {
                             Write-Verbose "    [WhatIf] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
                             $RoleAssignmentsCreated++
@@ -938,7 +965,7 @@ foreach ($Group in $ActiveReservationGroups) {
             if ($RBACCheck) {
                 Write-Verbose "  → Already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
-            } elseif (-not $PSCmdlet.ShouldProcess($ReservationScope, "Assign '$Role' to $($Group.Name)")) {
+            } elseif (-not (Test-ShouldProcess -Target $ReservationScope -Action "Assign '$Role' to $($Group.Name)")) {
                 if ($DryRun) {
                     Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on Reservations scope"
                     $ReservationRoleAssignmentsCreated++
