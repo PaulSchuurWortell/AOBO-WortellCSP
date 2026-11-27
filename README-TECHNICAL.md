@@ -24,7 +24,7 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 | IngramMicroNL AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Every subscription | — |
 | IngramMicroNL AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
 
-The reservation roles are assigned by role definition ID; Phase 1 validates each ID against its role name and skips a role (with a warning) on mismatch. Because Reservation Purchaser allows purchases that are billed to the customer, RI purchases should only run via an order from Wortell to Ingram Micro.
+Reservation Purchaser is assigned by role definition ID. Reservations Reader and Reservations Administrator are assigned by role **name**, because on `/providers/Microsoft.Capacity` Azure does not resolve a role definition ID (`RoleDefinitionDoesNotExist`). Phase 1 validates every ID against its role name (looking it up on several scopes) and skips a role, with a warning, if the ID resolves to a different role. Because Reservation Purchaser allows purchases that are billed to the customer, RI purchases should only run via an order from Wortell to Ingram Micro.
 
 By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. **The defaults do not include any rights on management groups** — only subscriptions (and the Reservations scope). Use `-Enforce` to remove management group assignments that exist; assignments on the tenant root management group are ignored. Pass `-IncludeManagementGroups` only in exceptional cases to also assign roles at the management group level.
 

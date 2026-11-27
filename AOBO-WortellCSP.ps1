@@ -27,6 +27,12 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.21 (November 27, 2026)
+    - Fix: "RoleDefinitionDoesNotExist" when assigning Reservations Reader on
+      /providers/Microsoft.Capacity. On that scope Azure does not resolve a role definition ID,
+      so Reservations Reader/Administrator are assigned by name (ID still validated in Phase 1).
+      Reservation Purchaser on subscriptions is still assigned by ID
+
     v1.20 (November 27, 2026)
     - Fix: Reservations Reader/Administrator were skipped because the role definition lookup
       ("NotFound") runs through the subscription, while these roles are only assignable on
@@ -238,7 +244,7 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127008"
+$Version = "20261127009"
 
 # Az announces a future output change for Get-AzRoleDefinition; the script only uses .Name, so silence
 # the (session-only) breaking change warning.
@@ -328,9 +334,14 @@ if ($IncludeReservationsAdministrator) {
 }
 
 # Returns the role parameter for Get-/New-AzRoleAssignment: by ID when known, otherwise by name
+# Roles that are only assignable on /providers/Microsoft.Capacity are assigned by NAME: on that scope Azure
+# does not resolve a role definition ID ("RoleDefinitionDoesNotExist"), while the name works. Their ID is
+# still validated against the name in Phase 1.
+$AssignByNameRoles = @("Reservations Reader", "Reservations Administrator")
+
 function Get-RoleParam {
     param([string]$Role)
-    if ($RoleIds.ContainsKey($Role)) { return @{ RoleDefinitionId = $RoleIds[$Role] } }
+    if ($RoleIds.ContainsKey($Role) -and $Role -notin $AssignByNameRoles) { return @{ RoleDefinitionId = $RoleIds[$Role] } }
     return @{ RoleDefinitionName = $Role }
 }
 
