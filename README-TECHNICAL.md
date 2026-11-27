@@ -90,7 +90,7 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1
 
 # Validate without making any changes
-.\AOBO-WortellCSP.ps1 -DryRun
+.\AOBO-WortellCSP.ps1 -WhatIf
 
 # Pre-validate that all foreign principals can receive assignments before proceeding
 # (use when GDAP registration is uncertain; omit if confirmed but API test fails)
@@ -127,15 +127,17 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1 -Verbose
 ```
 
-### Dry Run Mode
+### WhatIf Mode (Dry Run)
 
 To validate prerequisites without making any changes:
 
 ```powershell
-.\AOBO-WortellCSP.ps1 -DryRun
+.\AOBO-WortellCSP.ps1 -WhatIf
 ```
 
-**What Dry Run does:**
+`-DryRun` still works as an alias of `-WhatIf` for backward compatibility.
+
+**What WhatIf does:**
 
 - Shows what role assignments would be created
 - Shows what management groups would be processed
@@ -184,11 +186,11 @@ Use `-Subscription`, `-ManagementGroup`, and/or `-IncludeManagementGroups` to re
 - If a specified value is not found, a warning is printed and the script continues with whatever was matched
 - Phase 4 requires elevated access in Entra ID — see [Prerequisites](#prerequisites)
 
-**Running with no parameters at all** performs a live (non-dry-run) execution: Phase 2 is skipped, Phase 3 assigns roles on every enabled subscription in the tenant, and Phase 4 assigns roles on the Reservations scope — see the "None set (default)" row above. Use `-DryRun` first if you want to preview this without making changes.
+**Running with no parameters at all** performs a live (non-dry-run) execution: Phase 2 is skipped, Phase 3 assigns roles on every enabled subscription in the tenant, and Phase 4 assigns roles on the Reservations scope — see the "None set (default)" row above. Use `-WhatIf` first if you want to preview this without making changes.
 
 **Cancel window:**
 
-When running without `-DryRun`, the script pauses for 5 seconds after Phase 1 (discovery) before making any changes. Press **Ctrl+C** during this window to abort without any assignments being made.
+When running without `-WhatIf`, the script pauses for 5 seconds after Phase 1 (discovery) before making any changes. Press **Ctrl+C** during this window to abort without any assignments being made.
 
 **End-of-run pause:**
 
@@ -213,7 +215,7 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 ## Key Design Patterns
 
 - **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
-- **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
+- **WhatIf throughout:** The `-WhatIf` switch is checked inside every assignment block, not just at the entry point.
 - **Graceful principal handling:** If a foreign principal is not found in the tenant during assignment, it is skipped for all remaining phases without retrying. Use `-PrincipalCheck` for early detection.
 - **Non-blocking warnings:** Authorization failures on individual assignments and all Reservations-scope errors are reported as warnings — they appear in the summary but do not change SUCCESS to FAILURE.
 

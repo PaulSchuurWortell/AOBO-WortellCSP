@@ -27,6 +27,9 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.14 (November 27, 2026)
+    - Renamed -DryRun to -WhatIf for PowerShell convention; -DryRun remains available as an alias
+
     v1.13 (November 27, 2026)
     - Added "Reservation Purchaser" (subscription scope) and "Reservations Reader"
       (/providers/Microsoft.Capacity) to IngramMicroNL AdminAgents
@@ -70,7 +73,7 @@
     - Phases 2/3/4 are skipped when not relevant to the active targeting filter
     - MG lookup now fetches by name directly to avoid requiring list-all permission
     - Warns when a name matches multiple subscriptions or management groups
-    - 5-second cancel window after Phase 1 (non-DryRun only)
+    - 5-second cancel window after Phase 1 (non-WhatIf only)
     - Per-item progress counters in Phase 2 and Phase 3
 
     v1.5 (June 25, 2026)
@@ -115,7 +118,7 @@
     .\AOBO-WortellCSP.ps1
 
 .EXAMPLE
-    .\AOBO-WortellCSP.ps1 -DryRun
+    .\AOBO-WortellCSP.ps1 -WhatIf
 
 .EXAMPLE
     .\AOBO-WortellCSP.ps1 -IncludeManagementGroups
@@ -123,8 +126,10 @@
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification = 'File must use UTF-8 without BOM for Invoke-Expression compatibility when downloading via Invoke-WebRequest')]
 param(
+    # Validate without making changes. -DryRun is kept as an alias for backward compatibility.
     [Parameter(Mandatory = $false)]
-    [switch]$DryRun,
+    [Alias('DryRun')]
+    [switch]$WhatIf,
 
     # Opt-in: validate that each foreign principal can receive a test assignment before Phase 2.
     # Failed principals are excluded from all role assignments.
@@ -169,7 +174,10 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127001"
+$Version = "20261127002"
+
+# Internal flag used throughout the script (set by -WhatIf or its alias -DryRun)
+$DryRun = [bool]$WhatIf
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
