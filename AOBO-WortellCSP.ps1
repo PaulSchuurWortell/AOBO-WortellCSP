@@ -27,6 +27,14 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.20 (November 27, 2026)
+    - Fix: Reservations Reader/Administrator were skipped because the role definition lookup
+      ("NotFound") runs through the subscription, while these roles are only assignable on
+      /providers/Microsoft.Capacity. The lookup now tries several scopes; a role that cannot be
+      looked up is kept (the assignment itself fails safely on a wrong ID), and only a role whose
+      ID resolves to a different name is skipped
+    - Silenced the Az breaking-change warning for Get-AzRoleDefinition (session only)
+
     v1.19 (November 27, 2026)
     - Fix: "A parameter cannot be found that matches parameter name 'Confirm'" — removed
       -Confirm:$false from New-/Remove-AzRoleAssignment (not supported by those cmdlets) and
@@ -230,7 +238,11 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127007"
+$Version = "20261127008"
+
+# Az announces a future output change for Get-AzRoleDefinition; the script only uses .Name, so silence
+# the (session-only) breaking change warning.
+$env:SuppressAzurePowerShellBreakingChangeWarnings = 'true'
 
 # $PSCmdlet only exists when the script runs as a script file. When run via Invoke-Expression
 # (Cloud Shell one-liner) it is $null, so all ShouldProcess calls go through Test-ShouldProcess.
@@ -475,16 +487,28 @@ try { $TenantId = (Get-AzContext -ErrorAction Stop).Tenant.Id } catch { Write-Ve
 # --- Validate role definition IDs against their role names ---
 foreach ($RoleName in @($RoleIds.Keys)) {
     if ($RoleName -eq "Reservations Administrator" -and -not $IncludeReservationsAdministrator) { continue }
-    try {
-        $RoleDef = Get-AzRoleDefinition -Id $RoleIds[$RoleName] -ErrorAction Stop
-        if (-not $RoleDef -or $RoleDef.Name -ne $RoleName) {
-            throw "ID $($RoleIds[$RoleName]) resolves to '$($RoleDef.Name)'"
+    # Some built-in roles (e.g. the Reservations roles) can only be assigned on /providers/Microsoft.Capacity,
+    # so a lookup through the current subscription returns NotFound. Try several lookup scopes.
+    $RoleDef = $null
+    foreach ($LookupScope in @($null, "/", "/providers/Microsoft.Capacity")) {
+        try {
+            $ScopeParam = if ($LookupScope) { @{ Scope = $LookupScope } } else { @{} }
+            $RoleDef = Get-AzRoleDefinition -Id $RoleIds[$RoleName] @ScopeParam -ErrorAction Stop
+            if ($RoleDef) { break }
+        } catch {
+            Write-Verbose "  Role definition lookup for '$RoleName' (scope '$LookupScope') failed: $($_.Exception.Message)"
         }
-        Write-Verbose "  ✓ Role definition: $RoleName [$($RoleIds[$RoleName])]"
-    } catch {
-        Write-Warning "  Role definition check failed for '$RoleName': $($_.Exception.Message) — role will be skipped"
-        $Warnings += "Role '$RoleName' skipped — role definition ID could not be validated"
+    }
+
+    if (-not $RoleDef) {
+        # Not found: keep the role. The assignment itself fails safely when the ID does not exist.
+        Write-Verbose "  Role definition '$RoleName' [$($RoleIds[$RoleName])] could not be looked up — not validated"
+    } elseif ($RoleDef.Name -ne $RoleName) {
+        Write-Warning "  Role definition ID $($RoleIds[$RoleName]) resolves to '$($RoleDef.Name)', expected '$RoleName' — role will be skipped"
+        $Warnings += "Role '$RoleName' skipped — role definition ID resolves to '$($RoleDef.Name)'"
         $InvalidRoles += $RoleName
+    } else {
+        Write-Verbose "  ✓ Role definition: $RoleName [$($RoleIds[$RoleName])]"
     }
 }
 
