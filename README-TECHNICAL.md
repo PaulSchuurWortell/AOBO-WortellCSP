@@ -123,9 +123,30 @@ Then run with any combination of parameters:
 # lets Wortell change the scope of a Reserved Instance after purchase)
 .\AOBO-WortellCSP.ps1 -IncludeReservationsAdministrator
 
+# Check the current assignments and restore them to the script defaults (see "Enforce Mode")
+# Always preview first with -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce -IncludeManagementGroups -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce
+
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
 ```
+
+### Enforce Mode
+
+`-Enforce` checks the role assignments of the three AOBO groups and restores them to the defaults of this script:
+
+- **Missing** default assignments are created, exactly as in a normal run.
+- **Extra** direct assignments of the AOBO groups that are not part of the defaults are **removed**. Examples: a Contributor role for IngramMicroNL AdminAgents on a subscription, or Reservations Administrator on the Reservations scope without `-IncludeReservationsAdministrator`.
+- Scopes checked: subscriptions, the Reservations scope (`/providers/Microsoft.Capacity`, needs elevated access) and — **only** with `-IncludeManagementGroups` or `-ManagementGroup` — management groups. Without those switches, management group assignments are left untouched. Resource group and resource level assignments are never checked.
+- The defaults per scope are the roles in the table under [Roles per principal](#roles-per-principal). On a subscription, Reservation Purchaser for Wortell is only a default where the group has no Owner.
+- Never touched: assignments of other principals, inherited assignments (only the exact scope is evaluated), and roles whose ID could not be validated in Phase 1.
+- Combine with `-WhatIf` to see what would change: each removal is shown as `What if: Performing the operation "Remove '<role>' from <group>"` and the summary lists all of them. `-Confirm` asks per removal.
+- Without `-WhatIf`, the script asks for one confirmation before it starts removing (skip with `-Force`).
+- `-Enforce` works together with `-Subscription`, `-ManagementGroup` and `-ReservationsOnly`: only the scopes that are in scope for that run are enforced.
+
+> **Note:** if a customer deliberately granted one of these groups extra rights, `-Enforce` removes them. Run with `-WhatIf` first.
 
 ### WhatIf Mode (Dry Run)
 
@@ -216,6 +237,7 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 - **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
 - **WhatIf throughout:** The `-WhatIf` switch is checked inside every assignment block, not just at the entry point.
+- **Enforce:** `-Enforce` compares the AOBO groups' direct assignments per scope with the defaults and removes extras (via `Invoke-EnforceScope`, which honors `-WhatIf`/`-Confirm`); MGs only with the MG opt-in.
 - **Graceful principal handling:** If a foreign principal is not found in the tenant during assignment, it is skipped for all remaining phases without retrying. Use `-PrincipalCheck` for early detection.
 - **Non-blocking warnings:** Authorization failures on individual assignments and all Reservations-scope errors are reported as warnings — they appear in the summary but do not change SUCCESS to FAILURE.
 
