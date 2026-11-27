@@ -10,7 +10,21 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 - **Wortell CSP Tier 1 AdminAgents** — Owner role
 - **Wortell CSP Tier 2 AdminAgents** — Owner role
-- **IngramMicroNL AdminAgents** — Support Request Contributor role, Quota Request Operator role
+- **IngramMicroNL AdminAgents** — Support Request Contributor, Quota Request Operator, Reservation Purchaser, Reservations Reader
+
+### Roles per principal
+
+| Principal | Role | Scope | Condition |
+| --------- | ---- | ----- | --------- |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Owner | Every subscription (and MGs with `-IncludeManagementGroups`) | — |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Subscription | Only where the group has no Owner on that subscription |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Administrator (`a8889054-8d42-49c9-bc1c-52486c10e7cd`) | `/providers/Microsoft.Capacity` | Only with `-IncludeReservationsAdministrator`; requires elevated access |
+| IngramMicroNL AdminAgents | Support Request Contributor, Quota Request Operator | Every subscription | — |
+| IngramMicroNL AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Every subscription | — |
+| IngramMicroNL AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
+
+The reservation roles are assigned by role definition ID; Phase 1 validates each ID against its role name and skips a role (with a warning) on mismatch. Because Reservation Purchaser allows purchases that are billed to the customer, RI purchases should only run via an order from Wortell to Ingram Micro.
 
 By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. Pass `-IncludeManagementGroups` to also assign roles at the management group level.
 
@@ -52,8 +66,8 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 - **Elevated access enabled for Phase 4 (Reservations scope)**
   - The Reservations scope (`/providers/Microsoft.Capacity`) sits outside the management group hierarchy. Owner at root MG does not cover it.
   - To assign roles there, go to **Entra ID → Properties**, set **Access management for Azure resources** to **Yes**, and click **Save** before running the script.
-  - You can disable it again after the script completes.
-  - If elevated access is not active, Phase 4 will fail with `AuthorizationFailed` — this is recorded as a warning, not a failure. Use `-OwnerCheck` to detect this before assignments start.
+  - You can disable it again after the script completes — the script reminds you in the summary.
+  - Phase 1 checks for elevated access (root scope `/`, with a read on `/providers/Microsoft.Capacity` as fallback). If it is missing, **only the Capacity-scope assignments are skipped**, a warning with a link to [Elevate access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin) is shown, and the rest of the script runs normally. Re-run with `-ReservationsOnly` after enabling elevated access.
 - **Active GDAP relationship** with both Wortell and Ingram Micro — accepting GDAP automatically registers the following groups as guest service principals in the customer tenant (no manual invitation needed):
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
@@ -104,6 +118,10 @@ Then run with any combination of parameters:
 # Combine targeting parameters (also adds Phase 4 to a targeted run)
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production" -Subscription "My Subscription"
 .\AOBO-WortellCSP.ps1 -Subscription "My Subscription" -ReservationsOnly
+
+# Also give Wortell "Reservations Administrator" on /providers/Microsoft.Capacity (default off;
+# lets Wortell change the scope of a Reserved Instance after purchase)
+.\AOBO-WortellCSP.ps1 -IncludeReservationsAdministrator
 
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
@@ -184,10 +202,10 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription and Reservations scope (`-OwnerCheck`) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
+| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription (`-OwnerCheck`); validate role definition IDs; check for elevated access (needed for Phase 4) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
 | 2 | Skipped by default. Runs when `-IncludeManagementGroups` or `-ManagementGroup` is used, assigning configured roles to all management groups (or those matching `-ManagementGroup`); `PrincipalNotFound` excludes the group from all remaining phases; `AuthorizationFailed` is a non-blocking warning | — |
-| 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
-| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Entra ID — `AuthorizationFailed` is recorded as a non-blocking warning | — |
+| 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); conditional roles (Wortell Reservation Purchaser) are skipped where the group has Owner; skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
+| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Entra ID — without it the phase is skipped with a warning; other failures are non-blocking warnings | — |
 | Summary | Display results — MG and subscription counts, role assignment totals, skipped principals, and any warnings or errors | — |
 
 ---
