@@ -10,9 +10,23 @@ The `AOBO-WortellCSP.ps1` script configures role assignments for:
 
 - **Wortell CSP Tier 1 AdminAgents** — Owner role
 - **Wortell CSP Tier 2 AdminAgents** — Owner role
-- **IngramMicroNL AdminAgents** — Support Request Contributor role, Quota Request Operator role
+- **IngramMicroNL AdminAgents** — Support Request Contributor, Quota Request Operator, Reservation Purchaser, Reservations Reader
 
-By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. Pass `-IncludeManagementGroups` to also assign roles at the management group level.
+### Roles per principal
+
+| Principal | Role | Scope | Condition |
+| --------- | ---- | ----- | --------- |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Owner | Every subscription (management groups only with explicit `-IncludeManagementGroups`; not part of the defaults) | — |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Subscription | Only where the group has no Owner on that subscription |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
+| Wortell CSP Tier 1 / Tier 2 AdminAgents | Reservations Administrator (`a8889054-8d42-49c9-bc1c-52486c10e7cd`) | `/providers/Microsoft.Capacity` | Only with `-IncludeReservationsAdministrator`; requires elevated access |
+| IngramMicroNL AdminAgents | Support Request Contributor, Quota Request Operator | Every subscription | — |
+| IngramMicroNL AdminAgents | Reservation Purchaser (`f7b75c60-3036-4b75-91c3-6b41c27c1689`) | Every subscription | — |
+| IngramMicroNL AdminAgents | Reservations Reader (`582fc458-8989-419f-a480-75249bc5db7a`) | `/providers/Microsoft.Capacity` | Requires elevated access |
+
+The reservation roles are assigned by role definition ID; Phase 1 validates each ID against its role name and skips a role (with a warning) on mismatch. Because Reservation Purchaser allows purchases that are billed to the customer, RI purchases should only run via an order from Wortell to Ingram Micro.
+
+By default, the script ensures these groups have the appropriate permissions on all subscriptions, enabling support teams to assist customers without requiring guest invitations. **The defaults do not include any rights on management groups** — only subscriptions (and the Reservations scope). Use `-Enforce` to remove management group assignments that exist; assignments on the tenant root management group are ignored. Pass `-IncludeManagementGroups` only in exceptional cases to also assign roles at the management group level.
 
 ---
 
@@ -52,8 +66,8 @@ Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Pau
 - **Elevated access enabled for Phase 4 (Reservations scope)**
   - The Reservations scope (`/providers/Microsoft.Capacity`) sits outside the management group hierarchy. Owner at root MG does not cover it.
   - To assign roles there, go to **Entra ID → Properties**, set **Access management for Azure resources** to **Yes**, and click **Save** before running the script.
-  - You can disable it again after the script completes.
-  - If elevated access is not active, Phase 4 will fail with `AuthorizationFailed` — this is recorded as a warning, not a failure. Use `-OwnerCheck` to detect this before assignments start.
+  - You can disable it again after the script completes — the script reminds you in the summary.
+  - Phase 1 checks for elevated access (root scope `/`, with a read on `/providers/Microsoft.Capacity` as fallback). If it is missing, **only the Capacity-scope assignments are skipped**, a warning with a link to [Elevate access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin) is shown, and the rest of the script runs normally. Re-run with `-ReservationsOnly` after enabling elevated access.
 - **Active GDAP relationship** with both Wortell and Ingram Micro — accepting GDAP automatically registers the following groups as guest service principals in the customer tenant (no manual invitation needed):
   - Wortell CSP Tier 1 AdminAgents (`2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7`)
   - Wortell CSP Tier 2 AdminAgents (`27f932e9-605d-4270-bf3f-a02249b1721c`)
@@ -76,7 +90,7 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1
 
 # Validate without making any changes
-.\AOBO-WortellCSP.ps1 -DryRun
+.\AOBO-WortellCSP.ps1 -WhatIf
 
 # Pre-validate that all foreign principals can receive assignments before proceeding
 # (use when GDAP registration is uncertain; omit if confirmed but API test fails)
@@ -105,19 +119,49 @@ Then run with any combination of parameters:
 .\AOBO-WortellCSP.ps1 -ManagementGroup "Production" -Subscription "My Subscription"
 .\AOBO-WortellCSP.ps1 -Subscription "My Subscription" -ReservationsOnly
 
+# Also give Wortell "Reservations Administrator" on /providers/Microsoft.Capacity (default off;
+# lets Wortell change the scope of a Reserved Instance after purchase)
+.\AOBO-WortellCSP.ps1 -IncludeReservationsAdministrator
+
+# Check the current assignments and restore them to the script defaults (see "Enforce Mode")
+# Always preview first with -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce -IncludeManagementGroups -WhatIf
+.\AOBO-WortellCSP.ps1 -Enforce
+
 # Show verbose output including full exception details on errors
 .\AOBO-WortellCSP.ps1 -Verbose
 ```
 
-### Dry Run Mode
+### Enforce Mode
+
+`-Enforce` checks the role assignments of the three AOBO groups and restores them to the defaults of this script:
+
+- **Missing** default assignments are created, exactly as in a normal run.
+- **Extra** direct assignments of the AOBO groups that are not part of the defaults are **removed**. Examples: a Contributor role for IngramMicroNL AdminAgents on a subscription, or Reservations Administrator on the Reservations scope without `-IncludeReservationsAdministrator`.
+- Scopes checked: subscriptions, the Reservations scope (`/providers/Microsoft.Capacity`, needs elevated access) and **management groups**. Resource group and resource level assignments are never checked.
+- **Management groups: the default is no assignments.** The new defaults only place rights on subscriptions (and the Reservations scope). `-Enforce` therefore **removes** assignments of the three AOBO groups on every management group, without needing `-IncludeManagementGroups`. This is skipped in targeted mode (`-Subscription`, `-ReservationsOnly`).
+- **Tenant root management group is ignored.** Assignments of the groups on the tenant root group (the management group whose name equals the tenant ID) are never removed by `-Enforce`.
+- Explicit opt-in: if you pass `-IncludeManagementGroups` or `-ManagementGroup`, the script still assigns the configured roles on management groups, and `-Enforce` then treats those roles as the defaults there (extras are still removed; tenant root still ignored). This is only for exceptional situations — it is not part of the new defaults.
+- The defaults per scope are the roles in the table under [Roles per principal](#roles-per-principal). On a subscription, Reservation Purchaser for Wortell is only a default where the group has no Owner.
+- Never touched: assignments of other principals, inherited assignments (only the exact scope is evaluated), and roles whose ID could not be validated in Phase 1.
+- Combine with `-WhatIf` to see what would change: each removal is shown as `What if: Performing the operation "Remove '<role>' from <group>"` and the summary lists all of them. `-Confirm` asks per removal.
+- Without `-WhatIf`, the script asks for one confirmation before it starts removing (skip with `-Force`).
+- `-Enforce` works together with `-Subscription`, `-ManagementGroup` and `-ReservationsOnly`: only the scopes that are in scope for that run are enforced.
+
+> **Note:** if a customer deliberately granted one of these groups extra rights, `-Enforce` removes them. Run with `-WhatIf` first.
+
+### WhatIf Mode (Dry Run)
 
 To validate prerequisites without making any changes:
 
 ```powershell
-.\AOBO-WortellCSP.ps1 -DryRun
+.\AOBO-WortellCSP.ps1 -WhatIf
 ```
 
-**What Dry Run does:**
+`-WhatIf` is a native PowerShell switch (the script uses `SupportsShouldProcess`), so `-Confirm` is available too: each assignment then asks for confirmation. `-DryRun` is kept as a legacy switch and behaves exactly like `-WhatIf`. In `-WhatIf` mode `-PrincipalCheck` is skipped, because it creates a temporary test assignment.
+
+**What WhatIf does:**
 
 - Shows what role assignments would be created
 - Shows what management groups would be processed
@@ -166,11 +210,11 @@ Use `-Subscription`, `-ManagementGroup`, and/or `-IncludeManagementGroups` to re
 - If a specified value is not found, a warning is printed and the script continues with whatever was matched
 - Phase 4 requires elevated access in Entra ID — see [Prerequisites](#prerequisites)
 
-**Running with no parameters at all** performs a live (non-dry-run) execution: Phase 2 is skipped, Phase 3 assigns roles on every enabled subscription in the tenant, and Phase 4 assigns roles on the Reservations scope — see the "None set (default)" row above. Use `-DryRun` first if you want to preview this without making changes.
+**Running with no parameters at all** performs a live (non-dry-run) execution: Phase 2 is skipped, Phase 3 assigns roles on every enabled subscription in the tenant, and Phase 4 assigns roles on the Reservations scope — see the "None set (default)" row above. Use `-WhatIf` first if you want to preview this without making changes.
 
 **Cancel window:**
 
-When running without `-DryRun`, the script pauses for 5 seconds after Phase 1 (discovery) before making any changes. Press **Ctrl+C** during this window to abort without any assignments being made.
+When running without `-WhatIf`, the script pauses for 5 seconds after Phase 1 (discovery) before making any changes. Press **Ctrl+C** during this window to abort without any assignments being made.
 
 **End-of-run pause:**
 
@@ -184,10 +228,10 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 
 | Phase | Purpose | Abort condition |
 | ----- | ------- | --------------- |
-| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription and Reservations scope (`-OwnerCheck`) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
+| 1 | Discover enabled subscriptions and current user identity; optionally filter to specific subscriptions (`-Subscription`), validate foreign principals (`-PrincipalCheck`), or verify Owner access per subscription (`-OwnerCheck`); validate role definition IDs; check for elevated access (needed for Phase 4) | No enabled subscriptions; `-PrincipalCheck` used and no principals pass; or `-Subscription` filter matches nothing |
 | 2 | Skipped by default. Runs when `-IncludeManagementGroups` or `-ManagementGroup` is used, assigning configured roles to all management groups (or those matching `-ManagementGroup`); `PrincipalNotFound` excludes the group from all remaining phases; `AuthorizationFailed` is a non-blocking warning | — |
-| 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
-| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Entra ID — `AuthorizationFailed` is recorded as a non-blocking warning | — |
+| 3 | Assign configured roles to all subscriptions (or those passing `-OwnerCheck`); conditional roles (Wortell Reservation Purchaser) are skipped where the group has Owner; skipped entirely when `-ManagementGroup` is set without `-Subscription` | — |
+| 4 | Assign configured roles at the Azure Reservations scope (`/providers/Microsoft.Capacity`); skipped in targeted mode unless `-ReservationsOnly` is set; requires elevated access in Entra ID — without it the phase is skipped with a warning; other failures are non-blocking warnings | — |
 | Summary | Display results — MG and subscription counts, role assignment totals, skipped principals, and any warnings or errors | — |
 
 ---
@@ -195,7 +239,8 @@ The script runs through **four phases**, then prints a summary. It aborts early 
 ## Key Design Patterns
 
 - **Idempotency:** Each role assignment checks if the assignment already exists before creating it — safe to run multiple times.
-- **Dry-run throughout:** The `-DryRun` switch is checked inside every assignment block, not just at the entry point.
+- **WhatIf throughout:** The `-WhatIf` switch is checked inside every assignment block, not just at the entry point.
+- **Enforce:** `-Enforce` compares the AOBO groups' direct assignments per scope with the defaults and removes extras (via `Invoke-EnforceScope`, which honors `-WhatIf`/`-Confirm`); defaults: no MG assignments (tenant root ignored), unless the MG opt-in is used.
 - **Graceful principal handling:** If a foreign principal is not found in the tenant during assignment, it is skipped for all remaining phases without retrying. Use `-PrincipalCheck` for early detection.
 - **Non-blocking warnings:** Authorization failures on individual assignments and all Reservations-scope errors are reported as warnings — they appear in the summary but do not change SUCCESS to FAILURE.
 

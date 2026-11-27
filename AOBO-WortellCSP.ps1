@@ -21,8 +21,52 @@
     - Owner or User Access Administrator at root management group scope
     - Connected to Azure via Connect-AzAccount
     - Active GDAP relationship with Wortell and Ingram Micro
+    - Elevated access ("Access management for Azure resources") enabled for the Global Admin,
+      required for the /providers/Microsoft.Capacity assignments (Phase 4). Without it only
+      those assignments are skipped. Disable elevated access again after the run.
+      https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.17 (November 27, 2026)
+    - New defaults: the AOBO groups get no role assignments on management groups, only on
+      subscriptions (and the Reservations scope). -Enforce now removes assignments of the groups
+      on all management groups, without needing -IncludeManagementGroups. The tenant root
+      management group is ignored. Not done in targeted mode (-Subscription / -ReservationsOnly)
+    - Explicit opt-in (-IncludeManagementGroups / -ManagementGroup) still assigns the roles on
+      management groups and -Enforce then treats those roles as the defaults there (tenant root
+      still ignored)
+
+    v1.16 (November 27, 2026)
+    - Added -Enforce: check the role assignments of the three AOBO groups and restore them to
+      the script defaults. Missing assignments are created; direct assignments that are not part
+      of the defaults are removed, per scope (subscriptions, Reservations scope and - only with
+      -IncludeManagementGroups / -ManagementGroup - management groups). Works with -WhatIf to
+      preview, asks for confirmation before removing (skip with -Force), and never touches
+      other principals, inherited assignments or roles whose ID could not be validated
+    - Summary lists every assignment removed (or to be removed with -WhatIf)
+    - Assignments created by the script no longer double-prompt when -Confirm is used
+
+    v1.15 (November 27, 2026)
+    - Implemented SupportsShouldProcess: -WhatIf and -Confirm are now native; every role
+      assignment is guarded by ShouldProcess. -DryRun remains as a legacy switch (sets -WhatIf)
+    - -PrincipalCheck is skipped in -WhatIf mode (it creates a temporary test assignment)
+    - Context switches (Set-AzContext) are never subject to -WhatIf/-Confirm
+
+    v1.14 (November 27, 2026)
+    - Renamed -DryRun to -WhatIf for PowerShell convention; -DryRun remains available as an alias
+
+    v1.13 (November 27, 2026)
+    - Added "Reservation Purchaser" (subscription scope) and "Reservations Reader"
+      (/providers/Microsoft.Capacity) to IngramMicroNL AdminAgents
+    - Added "Reservations Reader" (/providers/Microsoft.Capacity) to Wortell AdminAgents
+      (already present since v1.1); "Reservation Purchaser" only where Wortell has no Owner
+    - Optional switch -IncludeReservationsAdministrator for "Reservations Administrator"
+      for Wortell (default off)
+    - Pre-flight check for Global Admin elevated access; Capacity assignments are skipped
+      with a warning when it is missing
+    - New roles are assigned by role definition ID (validated against the role name in Phase 1)
+    - Summary reports skipped assignments and reminds to disable elevated access
+
     v1.12 (September 17, 2026)
     - README: added Owner / User Access Administrator subscription-level requirement to
       "What you need" (previously only in README-TECHNICAL prerequisites)
@@ -54,7 +98,7 @@
     - Phases 2/3/4 are skipped when not relevant to the active targeting filter
     - MG lookup now fetches by name directly to avoid requiring list-all permission
     - Warns when a name matches multiple subscriptions or management groups
-    - 5-second cancel window after Phase 1 (non-DryRun only)
+    - 5-second cancel window after Phase 1 (non-WhatIf only)
     - Per-item progress counters in Phase 2 and Phase 3
 
     v1.5 (June 25, 2026)
@@ -99,14 +143,22 @@
     .\AOBO-WortellCSP.ps1
 
 .EXAMPLE
-    .\AOBO-WortellCSP.ps1 -DryRun
+    .\AOBO-WortellCSP.ps1 -WhatIf
 
 .EXAMPLE
     .\AOBO-WortellCSP.ps1 -IncludeManagementGroups
+
+.EXAMPLE
+    # Preview which assignments would be added or removed to restore the defaults
+    .\AOBO-WortellCSP.ps1 -Enforce -IncludeManagementGroups -WhatIf
 #>
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification = 'File must use UTF-8 without BOM for Invoke-Expression compatibility when downloading via Invoke-WebRequest')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
+    # Note: -WhatIf and -Confirm are provided by SupportsShouldProcess.
+
+    # Legacy switch, kept for backward compatibility: equivalent to -WhatIf.
     [Parameter(Mandatory = $false)]
     [switch]$DryRun,
 
@@ -141,34 +193,72 @@ param(
     # Run Phase 4 (Reservations scope) even in targeted mode.
     # When used alone, skips Phases 2 and 3. Can be combined with -Subscription or -ManagementGroup.
     [Parameter(Mandatory = $false)]
-    [switch]$ReservationsOnly
+    [switch]$ReservationsOnly,
+
+    # Opt-in: also assign "Reservations Administrator" on /providers/Microsoft.Capacity to the
+    # Wortell groups, so they can change the scope of a Reserved Instance after purchase.
+    [Parameter(Mandatory = $false)]
+    [switch]$IncludeReservationsAdministrator,
+
+    # Opt-in: check the current role assignments of the AOBO groups and restore them to the defaults
+    # of this script. Missing assignments are created (as normal) and direct assignments that are NOT
+    # part of the defaults are REMOVED, per scope: subscriptions, Reservations scope (/providers/
+    # Microsoft.Capacity) and management groups. The default on management groups is NO assignments
+    # (unless -IncludeManagementGroups / -ManagementGroup is used); the tenant root management group
+    # is ignored. Only assignments of the three AOBO groups on the exact scope are touched.
+    # Preview with -WhatIf.
+    [Parameter(Mandatory = $false)]
+    [switch]$Enforce,
+
+    # Skip the confirmation prompt that -Enforce shows before removing assignments.
+    [Parameter(Mandatory = $false)]
+    [switch]$Force
 )
 
 # =============================================================================
 # Version
 # =============================================================================
 
-$Version = "20260917003"
+$Version = "20261127005"
+
+# -DryRun (legacy) is equivalent to -WhatIf. $DryRun is then used throughout the script as the
+# "preview only" flag for messages and counters; the actual writes are guarded by ShouldProcess.
+if ($DryRun) { $WhatIfPreference = $true }
+$DryRun = [bool]$WhatIfPreference
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
 # =============================================================================
 
+# Role definition IDs for roles that are assigned by ID instead of by name.
+# Phase 1 validates each ID against its role name; a mismatch excludes that role.
+$RoleIds = @{
+    "Reservation Purchaser"      = "f7b75c60-3036-4b75-91c3-6b41c27c1689"
+    "Reservations Reader"        = "582fc458-8989-419f-a480-75249bc5db7a"
+    "Reservations Administrator" = "a8889054-8d42-49c9-bc1c-52486c10e7cd"
+}
+
+# Roles: assigned on every subscription.
+# ConditionalRoles: assigned on a subscription only when the group has no Owner there
+# (checked per subscription in Phase 3).
 $Groups = @(
     @{
-        Name     = "Wortell CSP Tier 1 AdminAgents"
-        ObjectId = "2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7"
-        Roles    = @("Owner")
+        Name             = "Wortell CSP Tier 1 AdminAgents"
+        ObjectId         = "2e59f31c-83fd-4ca1-bed4-4b4ee704c0f7"
+        Roles            = @("Owner")
+        ConditionalRoles = @("Reservation Purchaser")
     },
     @{
-        Name     = "Wortell CSP Tier 2 AdminAgents"
-        ObjectId = "27f932e9-605d-4270-bf3f-a02249b1721c"
-        Roles    = @("Owner")
+        Name             = "Wortell CSP Tier 2 AdminAgents"
+        ObjectId         = "27f932e9-605d-4270-bf3f-a02249b1721c"
+        Roles            = @("Owner")
+        ConditionalRoles = @("Reservation Purchaser")
     },
     @{
-        Name     = "IngramMicroNL AdminAgents"
-        ObjectId = "34c4dd11-78c0-41e5-8370-c6dbf16bc3e9"
-        Roles    = @("Support Request Contributor", "Quota Request Operator")
+        Name             = "IngramMicroNL AdminAgents"
+        ObjectId         = "34c4dd11-78c0-41e5-8370-c6dbf16bc3e9"
+        Roles            = @("Support Request Contributor", "Quota Request Operator", "Reservation Purchaser")
+        ConditionalRoles = @()
     }
 )
 
@@ -183,8 +273,84 @@ $ReservationGroups = @(
         Name     = "Wortell CSP Tier 2 AdminAgents"
         ObjectId = "27f932e9-605d-4270-bf3f-a02249b1721c"
         Roles    = @("Reservations Reader")
+    },
+    @{
+        Name     = "IngramMicroNL AdminAgents"
+        ObjectId = "34c4dd11-78c0-41e5-8370-c6dbf16bc3e9"
+        Roles    = @("Reservations Reader")
     }
 )
+
+# Optional (-IncludeReservationsAdministrator): Wortell can change the scope of an RI after purchase
+if ($IncludeReservationsAdministrator) {
+    foreach ($G in ($ReservationGroups | Where-Object { $_.Name -like "Wortell CSP*" })) {
+        $G.Roles += "Reservations Administrator"
+    }
+}
+
+# Returns the role parameter for Get-/New-AzRoleAssignment: by ID when known, otherwise by name
+function Get-RoleParam {
+    param([string]$Role)
+    if ($RoleIds.ContainsKey($Role)) { return @{ RoleDefinitionId = $RoleIds[$Role] } }
+    return @{ RoleDefinitionName = $Role }
+}
+
+# -Enforce: removes direct assignments of a group on exactly one scope that are not in $DesiredRoles.
+# Assignments of other principals, inherited assignments and roles whose ID could not be validated
+# ($InvalidRoles) are never touched. Honors -WhatIf / -Confirm of the script.
+function Invoke-EnforceScope {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [string]$Scope,
+        [string]$ScopeLabel,
+        [hashtable]$Group,
+        [string[]]$DesiredRoles
+    )
+
+    try {
+        $Existing = @(Get-AzRoleAssignment -ObjectId $Group.ObjectId -Scope $Scope -ErrorAction Stop |
+            Where-Object { $_.Scope -eq $Scope })
+    } catch {
+        Write-Warning "    Enforce: unable to read assignments of $($Group.Name) on $ScopeLabel — $($_.Exception.Message)"
+        $script:Warnings += "Enforce: could not read assignments of $($Group.Name) on $ScopeLabel"
+        return
+    }
+
+    foreach ($Assignment in $Existing) {
+        $RoleName = $Assignment.RoleDefinitionName
+        if ($RoleName -in $DesiredRoles -or $RoleName -in $script:InvalidRoles) { continue }
+
+        $Line = "$RoleName for $($Group.Name) on $ScopeLabel"
+        if (-not $PSCmdlet.ShouldProcess($Scope, "Remove '$RoleName' from $($Group.Name)")) {
+            if ($script:DryRun) {
+                $script:EnforceRemoved++
+                $script:EnforceLog += "Would remove: $Line"
+            }
+            continue
+        }
+
+        try {
+            Remove-AzRoleAssignment `
+                -ObjectId $Group.ObjectId `
+                -RoleDefinitionName $RoleName `
+                -Scope $Scope `
+                -Confirm:$false `
+                -ErrorAction Stop | Out-Null
+            Write-Output "    ✗ Removed: $Line"
+            $script:EnforceRemoved++
+            $script:EnforceLog += "Removed: $Line"
+        } catch {
+            Write-Verbose "    Exception removing $Line : $($_.Exception)"
+            if ($_.Exception.Message -like "*AuthorizationFailed*") {
+                Write-Warning "    Access denied: could not remove $Line"
+                $script:Warnings += "Enforce: access denied removing $Line"
+            } else {
+                Write-Warning "    Error removing $Line : $_"
+                $script:Errors += "Error removing $Line : $_"
+            }
+        }
+    }
+}
 
 # =============================================================================
 # Initialize tracking variables
@@ -202,6 +368,13 @@ $MgRoleAssignmentsCreated          = 0
 $MgRoleAssignmentsExists           = 0
 $ReservationRoleAssignmentsCreated = 0
 $ReservationRoleAssignmentsExists  = 0
+$SkippedAssignments                = 0   # conditional roles skipped because the group already has Owner
+$CapacitySkipped                   = 0   # Capacity-scope assignments skipped (no elevated access)
+$InvalidRoles                      = @()
+$HasElevatedAccess                 = $false
+$SkipCapacity                      = $false
+$EnforceRemoved                    = 0   # -Enforce: assignments removed (or to remove in -WhatIf mode)
+$EnforceLog                        = @()
 
 # =============================================================================
 # Banner
@@ -218,6 +391,21 @@ if ($Subscription -or $ManagementGroup -or $ReservationsOnly) {
     if ($Subscription)     { Write-Output "  Subscriptions:     $($Subscription    -join ', ')" }
     if ($ManagementGroup)  { Write-Output "  Management groups: $($ManagementGroup -join ', ')" }
     if ($ReservationsOnly) { Write-Output "  Reservations:      yes" }
+}
+if ($IncludeReservationsAdministrator) {
+    Write-Output "Reservations Administrator for Wortell: included"
+}
+if ($Enforce) {
+    if ($DryRun) {
+        Write-Output "ENFORCE MODE - assignments that are not part of the defaults would be removed (preview)"
+    } else {
+        Write-Output "ENFORCE MODE - assignments of the AOBO groups that are not part of the defaults will be REMOVED"
+    }
+    if ($ManagementGroup -or $IncludeManagementGroups) {
+        Write-Output "  Defaults: subscriptions + Reservations scope; management groups per explicit opt-in (tenant root ignored)"
+    } else {
+        Write-Output "  Defaults: subscriptions + Reservations scope only; no management group assignments (tenant root ignored)"
+    }
 }
 if ($ManagementGroup -or $IncludeManagementGroups) {
     Write-Output "Management groups: included"
@@ -254,6 +442,53 @@ if ($Subscriptions.Count -eq 0) {
     return
 }
 
+# Tenant ID: the tenant root management group has this ID as its name (ignored by -Enforce)
+$TenantId = $null
+try { $TenantId = (Get-AzContext -ErrorAction Stop).Tenant.Id } catch { Write-Verbose "  Unable to determine tenant ID: $($_.Exception.Message)" }
+
+# --- Validate role definition IDs against their role names ---
+foreach ($RoleName in @($RoleIds.Keys)) {
+    if ($RoleName -eq "Reservations Administrator" -and -not $IncludeReservationsAdministrator) { continue }
+    try {
+        $RoleDef = Get-AzRoleDefinition -Id $RoleIds[$RoleName] -ErrorAction Stop
+        if (-not $RoleDef -or $RoleDef.Name -ne $RoleName) {
+            throw "ID $($RoleIds[$RoleName]) resolves to '$($RoleDef.Name)'"
+        }
+        Write-Verbose "  ✓ Role definition: $RoleName [$($RoleIds[$RoleName])]"
+    } catch {
+        Write-Warning "  Role definition check failed for '$RoleName': $($_.Exception.Message) — role will be skipped"
+        $Warnings += "Role '$RoleName' skipped — role definition ID could not be validated"
+        $InvalidRoles += $RoleName
+    }
+}
+
+# --- Elevated access check (needed for the /providers/Microsoft.Capacity assignments in Phase 4) ---
+$Phase4Planned = -not (($Subscription -or $ManagementGroup) -and -not $ReservationsOnly)
+if ($Phase4Planned) {
+    try {
+        $RootAssign = @(Get-AzRoleAssignment -Scope "/" -ObjectId $CurrentUser.Id -ErrorAction Stop |
+            Where-Object { $_.Scope -eq "/" -and $_.RoleDefinitionName -in @("Owner", "User Access Administrator") })
+        if ($RootAssign.Count -gt 0) {
+            $HasElevatedAccess = $true
+        } else {
+            # Fallback: a successful read on the Capacity scope also indicates sufficient access
+            Get-AzRoleAssignment -Scope "/providers/Microsoft.Capacity" -ErrorAction Stop | Out-Null
+            $HasElevatedAccess = $true
+        }
+    } catch {
+        Write-Verbose "  Elevated access check exception: $($_.Exception)"
+    }
+
+    if ($HasElevatedAccess) {
+        Write-Output "  ✓ Elevated access confirmed (root scope)"
+    } else {
+        $SkipCapacity = $true
+        Write-Warning "  Elevated access not detected — /providers/Microsoft.Capacity assignments (Phase 4) will be skipped."
+        Write-Warning "  Enable 'Access management for Azure resources' (Entra ID → Properties) and re-run: https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin"
+        $Warnings += "Capacity-scope assignments skipped — elevated access not detected (https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin)"
+    }
+}
+
 # --- Targeting filter: limit to specific subscriptions (-Subscription) ---
 if ($Subscription) {
     $MatchedSubs = @($Subscriptions | Where-Object { $_.Id -in $Subscription -or $_.Name -in $Subscription })
@@ -280,7 +515,9 @@ $ActiveReservationGroups = $ReservationGroups
 
 # --- Optional: Validate foreign principals (-PrincipalCheck) ---
 
-if ($PrincipalCheck) {
+if ($PrincipalCheck -and $DryRun) {
+    Write-Warning "  [PrincipalCheck] Skipped in -WhatIf mode: the check creates and removes a test assignment."
+} elseif ($PrincipalCheck) {
     Write-Output ""
     Write-Output "  [PrincipalCheck] Validating foreign principals..."
 
@@ -299,6 +536,7 @@ if ($PrincipalCheck) {
                 -RoleDefinitionName $TestRole `
                 -Scope $TestScope `
                 -ObjectType "ForeignGroup" `
+                -Confirm:$false `
                 -ErrorAction Stop | Out-Null
 
             Write-Verbose "  ✓ $($Group.Name)"
@@ -383,25 +621,6 @@ if ($OwnerCheck) {
     }
 
     Write-Output "  Subscriptions to process: $($ProcessedSubscriptions.Count) (skipped: $($SkippedSubscriptions.Count))"
-
-    if ((-not $Subscription -and -not $ManagementGroup) -or $ReservationsOnly) {
-        Write-Output ""
-        Write-Output "  [OwnerCheck] Verifying access on Reservations scope..."
-        try {
-            $ReservationAccess = Get-AzRoleAssignment `
-                -SignInName $CurrentUser.UserPrincipalName `
-                -Scope "/providers/Microsoft.Capacity" `
-                -ErrorAction Stop |
-                Where-Object { $_.RoleDefinitionName -in @("Owner", "User Access Administrator") }
-            if ($ReservationAccess) {
-                Write-Output "  ✓ Access confirmed on Reservations scope"
-            } else {
-                Write-Warning "  No Owner or UAA role found at Reservations scope — Phase 4 will likely fail. Enable 'Elevated access' under Entra ID → Properties first."
-            }
-        } catch {
-            Write-Warning "  Unable to verify Reservations scope access — Phase 4 may fail. Enable 'Elevated access' under Entra ID → Properties first."
-        }
-    }
 } else {
     $ProcessedSubscriptions = @($Subscriptions)
 }
@@ -415,6 +634,13 @@ if (-not $DryRun) {
     }
 }
 
+if ($Enforce -and -not $DryRun -and -not $Force) {
+    if (-not $PSCmdlet.ShouldContinue("-Enforce will REMOVE role assignments of the AOBO groups that are not part of the defaults (use -WhatIf first to preview). Continue?", "Enforce")) {
+        Write-Output "Cancelled — nothing was changed."
+        return
+    }
+}
+
 # =============================================================================
 # Phase 2: Assign roles on management groups
 # =============================================================================
@@ -424,6 +650,32 @@ Write-Output "[Phase 2] Assigning roles on management groups..."
 
 if (-not ($ManagementGroup -or $IncludeManagementGroups)) {
     Write-Output "  Skipped — management groups excluded by default (use -IncludeManagementGroups to include)"
+
+    # -Enforce: the default is NO assignments of the AOBO groups on management groups, so remove any
+    # that exist. The tenant root management group is ignored. Not done in targeted mode
+    # (-Subscription / -ReservationsOnly).
+    if ($Enforce -and -not ($Subscription -or $ReservationsOnly)) {
+        Write-Output "  Enforce: checking management groups for assignments of the AOBO groups (default: none; tenant root ignored)..."
+        try {
+            $EnforceMGs = @(Get-AzManagementGroup -ErrorAction Stop)
+        } catch {
+            Write-Warning "  Enforce: unable to list management groups — $($_.Exception.Message)"
+            $Warnings += "Enforce: could not list management groups, management group assignments not checked"
+            $EnforceMGs = @()
+        }
+        foreach ($MG in $EnforceMGs) {
+            if ($MG.Name -eq $TenantId) {
+                Write-Verbose "  Ignored tenant root management group: $($MG.DisplayName)"
+                continue
+            }
+            $ProcessedManagementGroups += $MG
+            $MgScope = "/providers/Microsoft.Management/managementgroups/$($MG.Name)"
+            foreach ($Group in $ActiveGroups) {
+                if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
+                Invoke-EnforceScope -Scope $MgScope -ScopeLabel "MG $($MG.DisplayName)" -Group $Group -DesiredRoles @()
+            }
+        }
+    }
 } else {
 if ($ManagementGroup) {
     # Fetch each specified MG directly by name to avoid requiring list-all permission.
@@ -478,10 +730,12 @@ foreach ($MG in $ManagementGroups) {
         if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
 
         foreach ($Role in $Group.Roles) {
+            if ($Role -in $InvalidRoles) { continue }
+            $RoleParam = Get-RoleParam $Role
             try {
                 $RBACCheck = Get-AzRoleAssignment `
                     -ObjectId $Group.ObjectId `
-                    -RoleDefinitionName $Role `
+                    @RoleParam `
                     -Scope $MgScope `
                     -ErrorAction SilentlyContinue |
                     Where-Object { $_.Scope -eq $MgScope }
@@ -489,15 +743,20 @@ foreach ($MG in $ManagementGroups) {
                 if ($RBACCheck) {
                     Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsExists++
-                } elseif ($DryRun) {
-                    Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
-                    $MgRoleAssignmentsCreated++
+                } elseif (-not $PSCmdlet.ShouldProcess($MgScope, "Assign '$Role' to $($Group.Name)")) {
+                    if ($DryRun) {
+                        Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
+                        $MgRoleAssignmentsCreated++
+                    } else {
+                        Write-Verbose "  Declined: $Role for $($Group.Name) on $($MG.DisplayName)"
+                    }
                 } else {
                     New-AzRoleAssignment `
                         -ObjectId $Group.ObjectId `
-                        -RoleDefinitionName $Role `
+                        @RoleParam `
                         -Scope $MgScope `
                         -ObjectType "ForeignGroup" `
+                        -Confirm:$false `
                         -ErrorAction Stop | Out-Null
 
                     Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on $($MG.DisplayName)"
@@ -522,6 +781,11 @@ foreach ($MG in $ManagementGroups) {
                 }
             }
         }
+
+        # -Enforce: remove assignments of this group on this MG that are not part of the defaults
+        if ($Enforce -and $Group.ObjectId -notin $SkippedPrincipalIds -and $MG.Name -ne $TenantId) {
+            Invoke-EnforceScope -Scope $MgScope -ScopeLabel "MG $($MG.DisplayName)" -Group $Group -DesiredRoles @($Group.Roles)
+        }
     }
 }
 
@@ -543,40 +807,68 @@ foreach ($Sub in $ProcessedSubscriptions) {
     $SubIndex++
     Write-Output "  [$SubIndex/$($ProcessedSubscriptions.Count)] $($Sub.Name)"
     try {
-        Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
+        # Switching context is not a change to Azure: never subject it to -WhatIf/-Confirm
+        Set-AzContext -SubscriptionId $Sub.Id -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
         Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
 
         foreach ($Group in $ActiveGroups) {
             if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
 
-            foreach ($Role in $Group.Roles) {
+            $OwnerOk      = $false
+            $DesiredHere  = @()   # roles this group should have on this subscription (for -Enforce)
+
+            foreach ($Role in (@($Group.Roles) + @($Group.ConditionalRoles))) {
                 $Scope = "/subscriptions/$($Sub.Id)"
+                if ($Role -in $InvalidRoles) { continue }
+                $RoleParam = Get-RoleParam $Role
+
+                # Conditional roles: only where the group has no Owner on this subscription
+                if ($Role -in @($Group.ConditionalRoles)) {
+                    $HasOwner = $OwnerOk -or [bool](Get-AzRoleAssignment `
+                        -ObjectId $Group.ObjectId `
+                        -RoleDefinitionName "Owner" `
+                        -Scope $Scope `
+                        -ErrorAction SilentlyContinue)
+                    if ($HasOwner) {
+                        Write-Verbose "    → Skipped: $Role for $($Group.Name) on $($Sub.Name) (Owner present)"
+                        $SkippedAssignments++
+                        continue
+                    }
+                }
+
+                $DesiredHere += $Role
 
                 try {
                     $RBACCheck = Get-AzRoleAssignment `
                         -ObjectId $Group.ObjectId `
-                        -RoleDefinitionName $Role `
+                        @RoleParam `
                         -Scope $Scope `
                         -ErrorAction SilentlyContinue |
                         Where-Object { $_.Scope -eq $Scope }
 
                     if ($RBACCheck) {
-                        Write-Verbose "    → Already exists: $Role for $($Group.Name)"
+                        Write-Verbose "    → Already present: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
-                    } elseif ($DryRun) {
-                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
-                        $RoleAssignmentsCreated++
+                    } elseif (-not $PSCmdlet.ShouldProcess($Scope, "Assign '$Role' to $($Group.Name)")) {
+                        if ($DryRun) {
+                            Write-Verbose "    [WhatIf] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
+                            $RoleAssignmentsCreated++
+                        } else {
+                            Write-Verbose "    Declined: $Role for $($Group.Name) on $($Sub.Name)"
+                        }
                     } else {
                         New-AzRoleAssignment `
                             -ObjectId $Group.ObjectId `
-                            -RoleDefinitionName $Role `
+                            @RoleParam `
                             -Scope $Scope `
                             -ObjectType "ForeignGroup" `
+                            -Confirm:$false `
                             -ErrorAction Stop | Out-Null
 
                         Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsCreated++
                     }
+                    if ($Role -eq "Owner") { $OwnerOk = $true }
                 } catch {
                     Write-Verbose "    Exception for '$($Group.Name)' on '$($Sub.Name)': $($_.Exception)"
 
@@ -585,8 +877,9 @@ foreach ($Sub in $ProcessedSubscriptions) {
                         $SkippedPrincipalIds += $Group.ObjectId
                         break
                     } elseif ($_.Exception.Message -like "*RoleAssignmentExists*" -or $_.Exception.Message -like "*already exists*") {
-                        Write-Verbose "    → Already exists (concurrent): $Role for $($Group.Name) on $($Sub.Name)"
+                        Write-Verbose "    → Already present (concurrent): $Role for $($Group.Name) on $($Sub.Name)"
                         $RoleAssignmentsExists++
+                        if ($Role -eq "Owner") { $OwnerOk = $true }
                     } elseif ($_.Exception.Message -like "*AuthorizationFailed*") {
                         Write-Warning "    Access denied: $Role for $($Group.Name) on $($Sub.Name)"
                         $Warnings += "Access denied: $Role for $($Group.Name) on subscription $($Sub.Name)"
@@ -595,6 +888,11 @@ foreach ($Sub in $ProcessedSubscriptions) {
                         $Errors += "Error assigning $Role to $($Group.Name) on subscription $($Sub.Name): $_"
                     }
                 }
+            }
+
+            # -Enforce: remove assignments of this group on this subscription that are not part of the defaults
+            if ($Enforce -and $Group.ObjectId -notin $SkippedPrincipalIds) {
+                Invoke-EnforceScope -Scope "/subscriptions/$($Sub.Id)" -ScopeLabel "subscription $($Sub.Name)" -Group $Group -DesiredRoles $DesiredHere
             }
         }
     } catch {
@@ -618,29 +916,42 @@ if (($Subscription -or $ManagementGroup) -and -not $ReservationsOnly) {
 
 $ReservationScope = "/providers/Microsoft.Capacity"
 
+if ($SkipCapacity) {
+    $CapacitySkipped = @($ActiveReservationGroups | ForEach-Object { $_.Roles } | Where-Object { $_ -notin $InvalidRoles }).Count
+    Write-Output "  Skipped — elevated access not detected ($CapacitySkipped assignment(s) not performed)"
+    $ActiveReservationGroups = @()
+}
+
 foreach ($Group in $ActiveReservationGroups) {
     if ($Group.ObjectId -in $SkippedPrincipalIds) { continue }
 
     foreach ($Role in $Group.Roles) {
+        if ($Role -in $InvalidRoles) { continue }
+        $RoleParam = Get-RoleParam $Role
         try {
             $RBACCheck = Get-AzRoleAssignment `
                 -ObjectId $Group.ObjectId `
-                -RoleDefinitionName $Role `
+                @RoleParam `
                 -Scope $ReservationScope `
                 -ErrorAction SilentlyContinue
 
             if ($RBACCheck) {
                 Write-Verbose "  → Already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
-            } elseif ($DryRun) {
-                Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on Reservations scope"
-                $ReservationRoleAssignmentsCreated++
+            } elseif (-not $PSCmdlet.ShouldProcess($ReservationScope, "Assign '$Role' to $($Group.Name)")) {
+                if ($DryRun) {
+                    Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on Reservations scope"
+                    $ReservationRoleAssignmentsCreated++
+                } else {
+                    Write-Verbose "  Declined: $Role for $($Group.Name) on Reservations scope"
+                }
             } else {
                 New-AzRoleAssignment `
                     -ObjectId $Group.ObjectId `
-                    -RoleDefinitionName $Role `
+                    @RoleParam `
                     -Scope $ReservationScope `
                     -ObjectType "ForeignGroup" `
+                    -Confirm:$false `
                     -ErrorAction Stop | Out-Null
 
                 Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on Reservations scope"
@@ -656,6 +967,11 @@ foreach ($Group in $ActiveReservationGroups) {
                 $Warnings += "Reservations: $Role for $($Group.Name) — $($_.Exception.Message)"
             }
         }
+    }
+
+    # -Enforce: remove assignments of this group on the Reservations scope that are not part of the defaults
+    if ($Enforce -and $Group.ObjectId -notin $SkippedPrincipalIds) {
+        Invoke-EnforceScope -Scope $ReservationScope -ScopeLabel "Reservations scope" -Group $Group -DesiredRoles @($Group.Roles)
     }
 }
 
@@ -696,6 +1012,25 @@ if ($DryRun) {
     Write-Output "  Reservation assignments created:         $ReservationRoleAssignmentsCreated"
 }
 Write-Output "  Reservation assignments (already exist): $ReservationRoleAssignmentsExists"
+Write-Output "  Skipped (conditional role, Owner present): $SkippedAssignments"
+Write-Output "  Skipped (Capacity scope, no elevated access): $CapacitySkipped"
+
+if ($Enforce) {
+    Write-Output ""
+    if ($DryRun) {
+        Write-Output "  Enforce: assignments to remove:       $EnforceRemoved"
+    } else {
+        Write-Output "  Enforce: assignments removed:         $EnforceRemoved"
+    }
+    foreach ($L in $EnforceLog) {
+        Write-Output "    - $L"
+    }
+    if ($Subscription -or $ReservationsOnly) {
+        Write-Output "  (management groups not checked — targeted mode)"
+    } elseif (-not ($ManagementGroup -or $IncludeManagementGroups)) {
+        Write-Output "  (management groups: default is no assignments — any found were removed; tenant root ignored)"
+    }
+}
 
 if ($SkippedPrincipalIds.Count -gt 0) {
     Write-Output ""
@@ -755,5 +1090,10 @@ if ($Errors.Count -eq 0) {
     Write-Output "================================================================================"
 }
 
-Write-Output ""
+if ($HasElevatedAccess) {
+    Write-Output "REMINDER: disable elevated access again (Entra ID → Properties → Access management for Azure resources → No)."
+    Write-Output "          https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin"
+    Write-Output ""
+}
+
 Pause

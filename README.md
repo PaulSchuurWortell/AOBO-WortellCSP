@@ -17,7 +17,7 @@ Assigns Azure RBAC roles to Wortell and Ingram Micro admin groups across all sub
 
 ### Step 1 — Enable elevated access
 
-> **Why?** The script assigns roles on the Azure Reservations scope, which is not covered by regular administrator permissions. This one-time step grants the necessary access.
+> **Why?** The script assigns roles on the Azure Reservations scope, which is not covered by regular administrator permissions. This one-time step grants the necessary access. The script checks for it automatically: without elevated access, only the Reservations-scope roles (Reservations Reader) are skipped, with a warning, and everything else still runs. Remember to switch it off again afterwards (Step 6).
 
 1. Go to **[https://portal.azure.com](https://portal.azure.com)** and sign in
 2. Search for **Entra ID** and open it
@@ -111,7 +111,7 @@ If you see errors and are unsure how to proceed, contact Wortell before closing 
 
 ### Stap 1 — Verhoogde toegang inschakelen
 
-> **Waarom?** Het script wijst rollen toe op het Azure Reservations-bereik, wat niet wordt gedekt door reguliere beheerdersmachtigingen. Deze eenmalige stap verleent de benodigde toegang.
+> **Waarom?** Het script wijst rollen toe op het Azure Reservations-bereik, wat niet wordt gedekt door reguliere beheerdersmachtigingen. Deze eenmalige stap verleent de benodigde toegang. Het script controleert dit automatisch: zonder verhoogde toegang worden alleen de rollen op het Reservations-bereik (Reservations Reader) overgeslagen, met een waarschuwing, en loopt de rest gewoon door. Zet het daarna weer uit (Stap 6).
 
 1. Ga naar **[https://portal.azure.com](https://portal.azure.com)** en meld je aan
 2. Zoek naar **Entra ID** en open dit
