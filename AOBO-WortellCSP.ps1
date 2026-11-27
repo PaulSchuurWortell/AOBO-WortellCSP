@@ -27,6 +27,11 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.19 (November 27, 2026)
+    - Fix: "A parameter cannot be found that matches parameter name 'Confirm'" — removed
+      -Confirm:$false from New-/Remove-AzRoleAssignment (not supported by those cmdlets) and
+      switched Set-AzContext to preference variables instead of -WhatIf/-Confirm parameters
+
     v1.18 (November 27, 2026)
     - Fix: "You cannot call a method on a null-valued expression" when the script is run via
       Invoke-Expression (Cloud Shell one-liner). $PSCmdlet does not exist in that case, so
@@ -225,13 +230,14 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127006"
+$Version = "20261127007"
 
 # $PSCmdlet only exists when the script runs as a script file. When run via Invoke-Expression
 # (Cloud Shell one-liner) it is $null, so all ShouldProcess calls go through Test-ShouldProcess.
 $ScriptCmdlet = $PSCmdlet
 
 function Test-ShouldProcess {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'Wrapper around the script cmdlet ShouldProcess; falls back when $PSCmdlet is unavailable (Invoke-Expression)')]
     param([string]$Target, [string]$Action)
     if ($ScriptCmdlet) { return $ScriptCmdlet.ShouldProcess($Target, $Action) }
     # No script cmdlet (Invoke-Expression): no -WhatIf/-Confirm parameters, but honor $WhatIfPreference
@@ -355,7 +361,6 @@ function Invoke-EnforceScope {
                 -ObjectId $Group.ObjectId `
                 -RoleDefinitionName $RoleName `
                 -Scope $Scope `
-                -Confirm:$false `
                 -ErrorAction Stop | Out-Null
             Write-Output "    ✗ Removed: $Line"
             $script:EnforceRemoved++
@@ -557,7 +562,6 @@ if ($PrincipalCheck -and $DryRun) {
                 -RoleDefinitionName $TestRole `
                 -Scope $TestScope `
                 -ObjectType "ForeignGroup" `
-                -Confirm:$false `
                 -ErrorAction Stop | Out-Null
 
             Write-Verbose "  ✓ $($Group.Name)"
@@ -783,7 +787,6 @@ foreach ($MG in $ManagementGroups) {
                         @RoleParam `
                         -Scope $MgScope `
                         -ObjectType "ForeignGroup" `
-                        -Confirm:$false `
                         -ErrorAction Stop | Out-Null
 
                     Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on $($MG.DisplayName)"
@@ -835,7 +838,17 @@ foreach ($Sub in $ProcessedSubscriptions) {
     Write-Output "  [$SubIndex/$($ProcessedSubscriptions.Count)] $($Sub.Name)"
     try {
         # Switching context is not a change to Azure: never subject it to -WhatIf/-Confirm
-        Set-AzContext -SubscriptionId $Sub.Id -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
+        # (done via the preference variables: not every Az cmdlet/version has -WhatIf/-Confirm parameters)
+        $SavedWhatIfPreference   = $WhatIfPreference
+        $SavedConfirmPreference  = $ConfirmPreference
+        $WhatIfPreference        = $false
+        $ConfirmPreference       = 'None'
+        try {
+            Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
+        } finally {
+            $WhatIfPreference  = $SavedWhatIfPreference
+            $ConfirmPreference = $SavedConfirmPreference
+        }
         Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
 
         foreach ($Group in $ActiveGroups) {
@@ -889,7 +902,6 @@ foreach ($Sub in $ProcessedSubscriptions) {
                             @RoleParam `
                             -Scope $Scope `
                             -ObjectType "ForeignGroup" `
-                            -Confirm:$false `
                             -ErrorAction Stop | Out-Null
 
                         Write-Verbose "    ✓ Assigned: $Role for $($Group.Name) on $($Sub.Name)"
@@ -978,7 +990,6 @@ foreach ($Group in $ActiveReservationGroups) {
                     @RoleParam `
                     -Scope $ReservationScope `
                     -ObjectType "ForeignGroup" `
-                    -Confirm:$false `
                     -ErrorAction Stop | Out-Null
 
                 Write-Verbose "  ✓ Assigned: $Role for $($Group.Name) on Reservations scope"
