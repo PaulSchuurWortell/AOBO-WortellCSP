@@ -135,7 +135,7 @@ To validate prerequisites without making any changes:
 .\AOBO-WortellCSP.ps1 -WhatIf
 ```
 
-`-DryRun` still works as an alias of `-WhatIf` for backward compatibility.
+`-WhatIf` is a native PowerShell switch (the script uses `SupportsShouldProcess`), so `-Confirm` is available too: each assignment then asks for confirmation. `-DryRun` is kept as a legacy switch and behaves exactly like `-WhatIf`. In `-WhatIf` mode `-PrincipalCheck` is skipped, because it creates a temporary test assignment.
 
 **What WhatIf does:**
 

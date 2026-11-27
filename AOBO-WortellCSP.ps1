@@ -27,6 +27,12 @@
       https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin
 
 .CHANGELOG
+    v1.15 (November 27, 2026)
+    - Implemented SupportsShouldProcess: -WhatIf and -Confirm are now native; every role
+      assignment is guarded by ShouldProcess. -DryRun remains as a legacy switch (sets -WhatIf)
+    - -PrincipalCheck is skipped in -WhatIf mode (it creates a temporary test assignment)
+    - Context switches (Set-AzContext) are never subject to -WhatIf/-Confirm
+
     v1.14 (November 27, 2026)
     - Renamed -DryRun to -WhatIf for PowerShell convention; -DryRun remains available as an alias
 
@@ -125,11 +131,13 @@
 #>
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification = 'File must use UTF-8 without BOM for Invoke-Expression compatibility when downloading via Invoke-WebRequest')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
-    # Validate without making changes. -DryRun is kept as an alias for backward compatibility.
+    # Note: -WhatIf and -Confirm are provided by SupportsShouldProcess.
+
+    # Legacy switch, kept for backward compatibility: equivalent to -WhatIf.
     [Parameter(Mandatory = $false)]
-    [Alias('DryRun')]
-    [switch]$WhatIf,
+    [switch]$DryRun,
 
     # Opt-in: validate that each foreign principal can receive a test assignment before Phase 2.
     # Failed principals are excluded from all role assignments.
@@ -174,10 +182,12 @@ param(
 # Version
 # =============================================================================
 
-$Version = "20261127002"
+$Version = "20261127003"
 
-# Internal flag used throughout the script (set by -WhatIf or its alias -DryRun)
-$DryRun = [bool]$WhatIf
+# -DryRun (legacy) is equivalent to -WhatIf. $DryRun is then used throughout the script as the
+# "preview only" flag for messages and counters; the actual writes are guarded by ShouldProcess.
+if ($DryRun) { $WhatIfPreference = $true }
+$DryRun = [bool]$WhatIfPreference
 
 # =============================================================================
 # Configuration: Groups and Role Assignments
@@ -393,7 +403,9 @@ $ActiveReservationGroups = $ReservationGroups
 
 # --- Optional: Validate foreign principals (-PrincipalCheck) ---
 
-if ($PrincipalCheck) {
+if ($PrincipalCheck -and $DryRun) {
+    Write-Warning "  [PrincipalCheck] Skipped in -WhatIf mode: the check creates and removes a test assignment."
+} elseif ($PrincipalCheck) {
     Write-Output ""
     Write-Output "  [PrincipalCheck] Validating foreign principals..."
 
@@ -585,9 +597,13 @@ foreach ($MG in $ManagementGroups) {
                 if ($RBACCheck) {
                     Write-Verbose "  → Already exists: $Role for $($Group.Name) on $($MG.DisplayName)"
                     $MgRoleAssignmentsExists++
-                } elseif ($DryRun) {
-                    Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
-                    $MgRoleAssignmentsCreated++
+                } elseif (-not $PSCmdlet.ShouldProcess($MgScope, "Assign '$Role' to $($Group.Name)")) {
+                    if ($DryRun) {
+                        Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on $($MG.DisplayName)"
+                        $MgRoleAssignmentsCreated++
+                    } else {
+                        Write-Verbose "  Declined: $Role for $($Group.Name) on $($MG.DisplayName)"
+                    }
                 } else {
                     New-AzRoleAssignment `
                         -ObjectId $Group.ObjectId `
@@ -639,7 +655,8 @@ foreach ($Sub in $ProcessedSubscriptions) {
     $SubIndex++
     Write-Output "  [$SubIndex/$($ProcessedSubscriptions.Count)] $($Sub.Name)"
     try {
-        Set-AzContext -SubscriptionId $Sub.Id -ErrorAction Stop | Out-Null
+        # Switching context is not a change to Azure: never subject it to -WhatIf/-Confirm
+        Set-AzContext -SubscriptionId $Sub.Id -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
         Write-Verbose "  Processing subscription: $($Sub.Name) [$($Sub.Id)]"
 
         foreach ($Group in $ActiveGroups) {
@@ -677,9 +694,13 @@ foreach ($Sub in $ProcessedSubscriptions) {
                     if ($RBACCheck) {
                         Write-Verbose "    → Already present: $Role for $($Group.Name)"
                         $RoleAssignmentsExists++
-                    } elseif ($DryRun) {
-                        Write-Verbose "    [DRY RUN] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
-                        $RoleAssignmentsCreated++
+                    } elseif (-not $PSCmdlet.ShouldProcess($Scope, "Assign '$Role' to $($Group.Name)")) {
+                        if ($DryRun) {
+                            Write-Verbose "    [WhatIf] Would assign: $Role for $($Group.Name) on $($Sub.Name)"
+                            $RoleAssignmentsCreated++
+                        } else {
+                            Write-Verbose "    Declined: $Role for $($Group.Name) on $($Sub.Name)"
+                        }
                     } else {
                         New-AzRoleAssignment `
                             -ObjectId $Group.ObjectId `
@@ -756,9 +777,13 @@ foreach ($Group in $ActiveReservationGroups) {
             if ($RBACCheck) {
                 Write-Verbose "  → Already exists: $Role for $($Group.Name) on Reservations scope"
                 $ReservationRoleAssignmentsExists++
-            } elseif ($DryRun) {
-                Write-Verbose "  [DRY RUN] Would assign: $Role for $($Group.Name) on Reservations scope"
-                $ReservationRoleAssignmentsCreated++
+            } elseif (-not $PSCmdlet.ShouldProcess($ReservationScope, "Assign '$Role' to $($Group.Name)")) {
+                if ($DryRun) {
+                    Write-Verbose "  [WhatIf] Would assign: $Role for $($Group.Name) on Reservations scope"
+                    $ReservationRoleAssignmentsCreated++
+                } else {
+                    Write-Verbose "  Declined: $Role for $($Group.Name) on Reservations scope"
+                }
             } else {
                 New-AzRoleAssignment `
                     -ObjectId $Group.ObjectId `
